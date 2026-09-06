@@ -56,7 +56,7 @@ K.Pill {
             var seen = {}, out = []
             root.wifi.networks.values.slice().sort((a, b) => (b.connected - a.connected) || (b.signalStrength - a.signalStrength))
                 .forEach(n => { if (n.name && !seen[n.name]) { seen[n.name] = 1; out.push(n) } })
-            return out
+            return out.slice(0, 12)   // strongest first; a 30-network list would run off the screen
         }
 
         Row {
