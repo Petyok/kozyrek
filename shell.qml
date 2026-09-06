@@ -9,8 +9,8 @@ import "zhor" as Z
 ShellRoot {
     Bar {
         left:   [ M.Power {}, M.Workspaces {}, M.WindowTitle {} ]
-        center: [ Z.Zhor { id: zhor; fsActive: Kozy.fsActive; cPill: "#1effffff"; pillRadius: Theme.radius; anchors.verticalCenter: parent.verticalCenter }, M.Clock {} ]
-        right:  [ M.Vpn {}, M.Dnd {}, M.Network {}, M.Bluetooth {}, M.Battery {}, M.Tray {} ]
+        center: [ M.Clock {} ]
+        right:  [ Z.Zhor { id: zhor; fsActive: Kozy.fsActive; cPill: "#1effffff"; pillRadius: Theme.radius; anchors.verticalCenter: parent.verticalCenter }, M.Vpn {}, M.Dnd {}, M.Network {}, M.Bluetooth {}, M.Battery {}, M.Tray {} ]
     }
     Osd {}
     // Two notification daemons cannot share the D-Bus name; in dev mode the
