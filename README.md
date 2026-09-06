@@ -1,6 +1,6 @@
 # 🐐rek
 
-![vibecoded](https://img.shields.io/badge/vibecoded-100%25-b69ad6) ![quickshell](https://img.shields.io/badge/quickshell-0.3-705492)
+[![vibecoded](https://img.shields.io/badge/vibecoded-100%25-b69ad6)](#model-credits) [![release](https://img.shields.io/github/v/release/Petyok/kozyrek)](https://github.com/Petyok/kozyrek/releases) [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE) ![quickshell](https://img.shields.io/badge/quickshell-0.3-705492)
 
 One Quickshell process for a Hyprland desktop: bar, notification daemon and
 OSD. Built to replace HyprPanel + swayosd + two standalone widgets on a 2-core
