@@ -1,0 +1,7 @@
+singleton Theme 1.0 Theme.qml
+singleton Kozy 1.0 Kozy.qml
+Bar 1.0 Bar.qml
+Pill 1.0 Pill.qml
+Popup 1.0 Popup.qml
+Osd 1.0 Osd.qml
+Notifications 1.0 Notifications.qml
