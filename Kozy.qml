@@ -26,6 +26,10 @@ QtObject {
         }
     }
 
+    // The bar window, registered by Bar.qml. Popups must anchor to the real
+    // window object: the `QsWindow.window` attached property hands out the
+    // interface proxy, and with that PopupAnchor silently positions at (0,0).
+    property var bar: null
     // At most one popup open at a time; Popup.qml registers itself here.
     property var activePopup: null
 

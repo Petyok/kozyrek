@@ -14,7 +14,7 @@ PopupWindow {
     property int contentWidth: 320
     default property alias content: col.data
 
-    anchor.window: pill.QsWindow.window
+    anchor.window: Kozy.bar
     anchor.item: pill
     anchor.edges: Edges.Bottom
     anchor.gravity: Edges.Bottom

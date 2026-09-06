@@ -16,6 +16,7 @@ PanelWindow {
     WlrLayershell.namespace: "kozyrek"
     WlrLayershell.layer: WlrLayer.Top
     exclusionMode: Kozy.devMode ? ExclusionMode.Ignore : ExclusionMode.Auto
+    Component.onCompleted: Kozy.bar = bar
 
     Row {
         id: leftRow

@@ -22,7 +22,7 @@ Row {
             QsMenuAnchor {
                 id: menu
                 menu: pill.modelData.menu
-                anchor.window: pill.QsWindow.window
+                anchor.window: K.Kozy.bar
                 anchor.item: pill
                 anchor.edges: Edges.Bottom
                 anchor.gravity: Edges.Bottom

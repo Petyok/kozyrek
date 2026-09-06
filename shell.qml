@@ -7,7 +7,7 @@ import "zhor" as Z
 ShellRoot {
     Bar {
         left:   [ M.Power {}, M.Workspaces {}, M.WindowTitle {} ]
-        center: [ Z.Zhor { id: zhor; fsActive: Kozy.fsActive; anchors.verticalCenter: parent.verticalCenter }, M.Clock {} ]
+        center: [ Z.Zhor { id: zhor; fsActive: Kozy.fsActive; cPill: "#1effffff"; pillRadius: Theme.radius; anchors.verticalCenter: parent.verticalCenter }, M.Clock {} ]
         right:  [ M.Vpn {}, M.Dnd {}, M.Network {}, M.Bluetooth {}, M.Battery {}, M.Tray {} ]
     }
     Osd {}
