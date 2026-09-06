@@ -12,6 +12,10 @@ PopupWindow {
     required property Item pill
     property bool open: false
     property int contentWidth: 320
+    // A grabbing xdg_popup (grabFocus) is refused for a layer surface that takes no
+    // keyboard input, so popups with text fields instead ask the bar to switch its
+    // layer to on-demand keyboard focus while they are open (see Bar.qml).
+    property bool wantsKeyboard: false
     default property alias content: col.data
 
     // Set on open, not as bindings: `anchor.item: pill` stays null when the
@@ -19,7 +23,7 @@ PopupWindow {
     anchor.edges: Edges.Bottom
     anchor.gravity: Edges.Bottom
     anchor.margins.top: 6
-    anchor.adjustment: PopupAdjustment.SlideX
+    anchor.adjustment: PopupAdjustment.SlideX | PopupAdjustment.FlipY
 
     visible: open && !Kozy.fsActive
     color: "transparent"

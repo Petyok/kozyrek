@@ -49,6 +49,7 @@ K.Pill {
         id: menu
         pill: root
         contentWidth: 300
+        wantsKeyboard: true      // the PSK field
         readonly property int colW: contentWidth - 32
         readonly property var list: {
             if (!root.wifi) return []
@@ -106,6 +107,4 @@ K.Pill {
             MouseArea { anchors.fill: parent; onClicked: { menu.open = false; Quickshell.execDetached(["nm-connection-editor"]) } }
         }
     }
-    // Popups with text input need keyboard focus; PopupWindow takes it via grabFocus.
-    Component.onCompleted: menu.grabFocus = true
 }

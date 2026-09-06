@@ -15,6 +15,7 @@ PanelWindow {
     color: "transparent"
     WlrLayershell.namespace: "kozyrek"
     WlrLayershell.layer: WlrLayer.Top
+    WlrLayershell.keyboardFocus: (Kozy.activePopup?.wantsKeyboard ?? false) ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
     exclusionMode: Kozy.devMode ? ExclusionMode.Ignore : ExclusionMode.Auto
     Component.onCompleted: Kozy.bar = bar
 
