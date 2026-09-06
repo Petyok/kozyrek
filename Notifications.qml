@@ -25,12 +25,16 @@ Scope {
     // in trackedNotifications and slide in as cards expire.
     readonly property var shown: server.trackedNotifications.values.slice(-maxShown).reverse()
 
+    // Only themed icons Qt can actually resolve (hicolor + the app's own); an
+    // unresolvable name would render as a broken-image checkerboard.
+    function themed(name) { return name && Quickshell.hasThemeIcon(name) ? Quickshell.iconPath(name) : "" }
     function iconFor(n) {
+        void DesktopEntries.applications.values.length   // re-evaluate once the async scan lands
         if (n.image) return n.image
-        if (n.appIcon) return n.appIcon.startsWith("/") ? n.appIcon : Quickshell.iconPath(n.appIcon, "")
+        if (n.appIcon) return n.appIcon.startsWith("/") ? n.appIcon : themed(n.appIcon)
         var e = n.desktopEntry ? DesktopEntries.byId(n.desktopEntry) : null
         if (!e && n.appName) e = DesktopEntries.heuristicLookup(n.appName)
-        return e?.icon ? Quickshell.iconPath(e.icon, "") : ""
+        return themed(e?.icon)
     }
 
     PanelWindow {

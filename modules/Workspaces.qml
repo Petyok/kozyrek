@@ -28,7 +28,10 @@ K.Pill {
                         // Class from the IPC object (always present), appId from the
                         // wayland handle as a fallback (may be null before it binds).
                         readonly property string cls: modelData.lastIpcObject?.class ?? modelData.wayland?.appId ?? ""
-                        readonly property var entry: cls ? DesktopEntries.heuristicLookup(cls) : null
+                        // DesktopEntries scans asynchronously (empty for ~1 s after start); depend on
+                        // the list so the lookup re-runs once it is populated.
+                        readonly property int appsSeen: DesktopEntries.applications.values.length
+                        readonly property var entry: (appsSeen >= 0 && cls) ? DesktopEntries.heuristicLookup(cls) : null
                         readonly property bool hasIcon: (entry?.icon ?? "") !== "" && Quickshell.hasThemeIcon(entry.icon)
                         width: 18; height: 18
                         IconImage { anchors.fill: parent; visible: parent.hasIcon; source: parent.hasIcon ? Quickshell.iconPath(parent.entry.icon) : "" }
