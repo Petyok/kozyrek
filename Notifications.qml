@@ -30,7 +30,9 @@ Scope {
     function themed(name) { return name && Quickshell.hasThemeIcon(name) ? Quickshell.iconPath(name) : "" }
     function iconFor(n) {
         void DesktopEntries.applications.values.length   // re-evaluate once the async scan lands
-        if (n.image) return n.image.startsWith("/") ? "file://" + n.image : n.image
+        // Quickshell fills `image` with "image://icon/<appIcon>" when the notification
+        // carries no real image; that must go through the theme check below instead.
+        if (n.image && !n.image.startsWith("image://icon/")) return n.image.startsWith("/") ? "file://" + n.image : n.image
         if (n.appIcon) return n.appIcon.startsWith("/") ? "file://" + n.appIcon : themed(n.appIcon)
         var e = n.desktopEntry ? DesktopEntries.byId(n.desktopEntry) : null
         if (!e && n.appName) e = DesktopEntries.heuristicLookup(n.appName)
