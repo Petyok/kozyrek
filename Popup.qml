@@ -14,8 +14,8 @@ PopupWindow {
     property int contentWidth: 320
     default property alias content: col.data
 
-    anchor.window: Kozy.bar
-    anchor.item: pill
+    // Set on open, not as bindings: `anchor.item: pill` stays null when the
+    // window is not known at construction time (verified 2026-09-07).
     anchor.edges: Edges.Bottom
     anchor.gravity: Edges.Bottom
     anchor.margins.top: 6
@@ -28,6 +28,9 @@ PopupWindow {
 
     onOpenChanged: {
         if (open) {
+            anchor.window = Kozy.bar
+            anchor.item = pill
+            anchor.updateAnchor()
             if (Kozy.activePopup && Kozy.activePopup !== popup) Kozy.activePopup.open = false
             Kozy.activePopup = popup
         } else if (Kozy.activePopup === popup) {

@@ -30,8 +30,8 @@ Scope {
     function themed(name) { return name && Quickshell.hasThemeIcon(name) ? Quickshell.iconPath(name) : "" }
     function iconFor(n) {
         void DesktopEntries.applications.values.length   // re-evaluate once the async scan lands
-        if (n.image) return n.image
-        if (n.appIcon) return n.appIcon.startsWith("/") ? n.appIcon : themed(n.appIcon)
+        if (n.image) return n.image.startsWith("/") ? "file://" + n.image : n.image
+        if (n.appIcon) return n.appIcon.startsWith("/") ? "file://" + n.appIcon : themed(n.appIcon)
         var e = n.desktopEntry ? DesktopEntries.byId(n.desktopEntry) : null
         if (!e && n.appName) e = DesktopEntries.heuristicLookup(n.appName)
         return themed(e?.icon)
@@ -92,15 +92,19 @@ Scope {
                             Text { text: card.n.summary; color: Theme.text; font.pixelSize: Theme.fontPx; font.bold: true; elide: Text.ElideRight; width: parent.width }
                             Text { visible: text !== ""; text: card.n.body; color: Theme.dim; font.pixelSize: 12; textFormat: Text.StyledText; wrapMode: Text.Wrap; maximumLineCount: 4; elide: Text.ElideRight; width: parent.width }
                             Row {
-                                visible: card.n.actions.length > 0
+                                id: actRow
+                                // Nested delegates cannot see the outer delegate's id (`card`); hand the
+                                // notification down through the Row, reachable as `parent.note`.
+                                readonly property var note: card.n
+                                visible: note.actions.length > 0
                                 spacing: 6
                                 Repeater {
-                                    model: card.n.actions.filter(a => a.identifier !== "default")
+                                    model: actRow.note.actions.filter(a => a.identifier !== "default")
                                     Rectangle {
                                         height: 24; width: lbl.implicitWidth + 16; radius: 8
                                         color: bma.containsMouse ? Theme.accent : "#1effffff"; border.color: Theme.faint
                                         Text { id: lbl; anchors.centerIn: parent; text: modelData.text; color: Theme.text; font.pixelSize: 11 }
-                                        MouseArea { id: bma; anchors.fill: parent; hoverEnabled: true; onClicked: { modelData.invoke(); card.n.dismiss() } }
+                                        MouseArea { id: bma; anchors.fill: parent; hoverEnabled: true; onClicked: { modelData.invoke(); parent.parent.note.dismiss() } }
                                     }
                                 }
                             }

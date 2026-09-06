@@ -1,3 +1,5 @@
+//@ pragma UseQApplication
+// ^ needed for tray menus (QsMenuAnchor); takes effect on restart, not reload.
 import QtQuick
 import Quickshell
 import Quickshell.Io
