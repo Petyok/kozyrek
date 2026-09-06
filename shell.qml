@@ -1,9 +1,10 @@
 import QtQuick
 import Quickshell
+import "modules" as M
 
 ShellRoot {
     Bar {
-        left:   [ Pill { Text { text: "🐐rek"; color: Theme.text; font.pixelSize: Theme.fontPx } } ]
+        left:   [ M.Power {} ]
         center: []
         right:  []
     }
