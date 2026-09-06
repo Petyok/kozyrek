@@ -6,6 +6,8 @@ One Quickshell process for a Hyprland desktop: bar, notification daemon and
 OSD. Built to replace HyprPanel + swayosd + two standalone widgets on a 2-core
 laptop where every resident process counts.
 
+Measured on the target laptop (i5-5350U, 8 GB), 10 min idle after the switch: **142 MB PSS, 1.8 % CPU** for the whole bar + notification daemon + OSD, plus 10 MB for the zhor collector. It replaced ~440 MB across seven processes (HyprPanel 103, its clock and zhor widgets 72+77, swayosd 34, nwg-dock 79, nm-applet 8, and the shared Qt libraries counted once more).
+
 > ⚠️ Personal config that happens to be public. Hardcoded for one laptop:
 > 1440×900, `intel_backlight`, `smc::kbd_backlight`, wg0/wg1/singbox_tun VPN
 > pills, Batumi weather. Fork and edit `shell.qml` / `modules/`; there is no
