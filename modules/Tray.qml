@@ -17,10 +17,11 @@ Row {
             active: menu.open
             // SystemTrayItem.icon is already an image source string.
             IconImage { source: pill.modelData.icon; implicitSize: 18; anchors.verticalCenter: parent.verticalCenter }
-            // nm-applet is `onlyMenu`: left click must open the menu too.
+            // Left and right click both open the menu (user preference); middle click
+            // is the SNI secondary action. Items without a menu get activate() on left.
             onClicked: button => {
-                if (button === Qt.RightButton || pill.modelData.onlyMenu) { if (pill.modelData.hasMenu) menu.open = !menu.open }
-                else if (button === Qt.MiddleButton) pill.modelData.secondaryActivate()
+                if (button === Qt.MiddleButton) pill.modelData.secondaryActivate()
+                else if (pill.modelData.hasMenu) menu.open = !menu.open
                 else pill.modelData.activate()
             }
 
