@@ -27,7 +27,8 @@ Scope {
 
     // Only themed icons Qt can actually resolve (hicolor + the app's own); an
     // unresolvable name would render as a broken-image checkerboard.
-    function themed(name) { return name && Quickshell.hasThemeIcon(name) ? Quickshell.iconPath(name) : "" }
+    function themed(name) { return (name && Quickshell.hasThemeIcon(name)) ? Quickshell.iconPath(name) : "" }
+    // iconFor always returns a string: "" hides the IconImage and collapses its slot.
     function iconFor(n) {
         void DesktopEntries.applications.values.length   // re-evaluate once the async scan lands
         // Quickshell puts the app icon NAME into `image` as "image://icon/<name>" when
