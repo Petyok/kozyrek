@@ -39,11 +39,12 @@ K.Pill {
                         Text { anchors.centerIn: parent; visible: !parent.hasIcon; text: "\u{F05AF}"; color: K.Theme.text; font.pixelSize: 15; font.family: K.Theme.iconFont }
                     }
                 }
-                Text {
+                // Empty workspace: a dot, not the id — Hyprland ids here are arbitrary
+                // (15…20) and mean nothing to the user.
+                Rectangle {
                     visible: ws.empty
-                    text: ws.modelData.id
+                    width: 8; height: 8; radius: 4
                     color: ws.modelData.focused ? K.Theme.text : K.Theme.dim
-                    font.pixelSize: K.Theme.fontPx; font.bold: true
                     anchors.verticalCenter: parent.verticalCenter
                 }
             }
