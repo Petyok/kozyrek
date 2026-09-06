@@ -1,3 +1,4 @@
 [submodule "zhor"]
 	path = zhor
 	url = https://github.com/Petyok/zhor
+	branch = component
