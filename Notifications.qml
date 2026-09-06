@@ -83,7 +83,8 @@ Scope {
                         IconImage {
                             id: icon
                             source: root.iconFor(card.n)
-                            visible: source !== ""
+                            // A path that does not resolve would render Qt's magenta checkerboard.
+                            visible: source !== "" && status !== Image.Error
                             implicitSize: 36
                         }
                         Column {
