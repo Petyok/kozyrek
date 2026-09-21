@@ -45,7 +45,7 @@ Scope {
     }
 
     PanelWindow {
-        visible: osd.shown && !Kozy.fsActive
+        visible: osd.shown   // Overlay layer: shown over fullscreen too, like swayosd did
         anchors { bottom: true }
         margins { bottom: 120 }
         implicitWidth: 280
