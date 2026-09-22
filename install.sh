@@ -28,6 +28,7 @@ Add to ~/.config/hypr/hyprland.conf (and remove your old bar / swayosd / mako):
 
   exec-once = qs -c kozyrek
   bind  = SUPER SHIFT, ESCAPE,         exec, qs -c kozyrek ipc call zhor toggle
+  bind  = SUPER, COMMA,                exec, qs -c kozyrek ipc call dnd toggle
   binde = , XF86AudioRaiseVolume,      exec, qs -c kozyrek ipc call osd volume +5
   binde = , XF86AudioLowerVolume,      exec, qs -c kozyrek ipc call osd volume -5
   binde = , XF86AudioMute,             exec, qs -c kozyrek ipc call osd volume mute
