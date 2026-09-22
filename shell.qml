@@ -21,4 +21,8 @@ ShellRoot {
         target: "zhor"
         function toggle(): void { zhor.toggle() }
     }
+    IpcHandler {
+        target: "dnd"
+        function toggle(): void { Kozy.dnd = !Kozy.dnd }
+    }
 }
