@@ -17,7 +17,7 @@ Measured on the target laptop (i5-5350U, 8 GB), 10 min idle after the switch: **
 
 | left | center | right |
 |---|---|---|
-| power menu · workspaces (app icons) · window title | [zhor](https://github.com/Petyok/zhor) · clock / calendar / weather | VPN pills · DND · wifi · bluetooth · battery · tray |
+| power menu · workspaces (app icons) · window title | [zhor](https://github.com/Petyok/zhor) · clock / calendar / weather | VPN pills · keyboard layout · DND · wifi · bluetooth · battery · tray |
 
 Plus: notification popups (top-right, DND, actions, images) and an OSD for
 volume / screen brightness / keyboard brightness driven over IPC.

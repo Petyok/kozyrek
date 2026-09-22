@@ -37,7 +37,7 @@ Scope {
             var a = Pipewire.defaultAudioSink?.audio
             if (!a) return
             if (arg === "mute") a.muted = !a.muted
-            else { a.volume = Parse.stepVolume(a.volume, arg, 1.5); if (a.muted) a.muted = false }
+            else a.volume = Parse.stepVolume(a.volume, arg, 1.5)   // mute is only ever toggled by the mute key
             osd.show("vol", a.volume, a.muted)
         }
         function brightness(arg: string): void { osd.setBrightness("bri", "intel_backlight", arg) }

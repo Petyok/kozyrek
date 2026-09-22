@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- Keyboard layout pill (EN/RU) in the right zone; click cycles the layout.
+
+### Fixed
+- Volume keys no longer unmute: the OSD showed "unmuted" after lowering the volume while muted.
+
 ## [0.1.1] - 2026-09-21
 
 ### Fixed
