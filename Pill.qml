@@ -7,6 +7,7 @@ Rectangle {
     readonly property bool hovered: ma.containsMouse
     default property alias content: inner.data
     signal clicked(int button)
+    signal wheeled(int delta)   // angleDelta.y, +120 per notch up
 
     implicitWidth: inner.implicitWidth + 24
     implicitHeight: Theme.pillH
@@ -27,5 +28,6 @@ Rectangle {
         hoverEnabled: true
         acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
         onClicked: mouse => pill.clicked(mouse.button)
+        onWheel: wheel => pill.wheeled(wheel.angleDelta.y)
     }
 }
