@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- Call recorder pill (first in the right zone): click records the call (built-in mic through an on-demand WebRTC echo canceller + the speaker output), click again stops and asks "Turn recorded audio to text?". Yes transcribes locally with NeMo-Speech.cpp (Nemotron 3.5 ASR + Nemotron-3-Diarization, ru/en auto) with a progress fill in the pill and a "Transcript ready" notification; No deletes the recording. Transcripts go to `~/Calls/<date>/transcript.md` + `.json`; audio is deleted after 7 days; recordings stop at 1.5 h. See `docs/rec.md`.
+- `rec` IPC target: `qs -c kozyrek ipc call rec toggle` (bound to Super+Alt+R).
+- `Pill.qml`: optional `progress` fill and `edge` border colour.
+
 ## [0.1.4] - 2026-09-23
 
 ### Added

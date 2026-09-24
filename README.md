@@ -17,10 +17,16 @@ Measured on the target laptop (i5-5350U, 8 GB), 10 min idle after the switch: **
 
 | left | center | right |
 |---|---|---|
-| power menu · workspaces (app icons) · window title | [zhor](https://github.com/Petyok/zhor) · clock / calendar / weather | VPN pills · keyboard layout · DND · volume · wifi · bluetooth · battery · tray |
+| power menu · workspaces (app icons) · window title | [zhor](https://github.com/Petyok/zhor) · clock / calendar / weather | call recorder · VPN pills · keyboard layout · DND · volume · wifi · bluetooth · battery · tray |
 
 Plus: notification popups (top-right, DND, actions, images) and an OSD for
 volume / screen brightness / keyboard brightness driven over IPC.
+
+The call recorder is one pill: click to record a call, click again, answer
+"Turn recorded audio to text?", and a local speaker-labelled transcript
+(Me / Speaker N, Russian and English) lands in `~/Calls/`. It works without
+headphones (echo cancellation on the mic, the other side taken from the
+speaker output). Setup, internals and limits: [docs/rec.md](docs/rec.md).
 
 ## Install
 
@@ -34,9 +40,9 @@ while `~/.config/quickshell/shell.qml` exists — move it away first.
 
 One module per file under `modules/`; `shell.qml` is the layout. `Theme.qml`
 holds the palette, `Kozy.qml` the shared state (fullscreen flag, DND, the one
-open popup). Pure helpers live in `lib/parse.js` and are the only unit-tested
-part (`node --test test_parse.mjs`); `./test_kozyrek.sh` checks the config
-loads without QML warnings.
+open popup). Pure helpers live in `lib/parse.js` (`node --test test_parse.mjs`);
+the recorder's Python helper lives in `rec/` with its own tests;
+`./test_kozyrek.sh` checks the config loads without QML warnings.
 
 Dev mode: `KOZYREK_DEV=1 qs -p ~/kozyrek` puts the bar at the bottom, ignores
 exclusive zones and skips the notification daemon, so it can run next to your

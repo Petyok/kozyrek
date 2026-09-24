@@ -10,7 +10,9 @@ ShellRoot {
     Bar {
         left:   [ M.Power {}, M.Workspaces {}, M.WindowTitle {} ]
         center: [ M.Clock {} ]
-        right:  [ Z.Zhor { id: zhor; fsActive: Kozy.fsActive; cPill: "#1effffff"; pillRadius: Theme.radius; anchors.verticalCenter: parent.verticalCenter }, M.Vpn {}, M.Layout {}, M.Dnd {}, M.Volume {}, M.Network {}, M.Bluetooth {}, M.Battery {}, M.Tray {} ]
+        // Rec first: the right Row is anchored right, so the one pill whose width
+        // changes while it works shifts nothing when it is leftmost.
+        right:  [ M.Rec { id: rec }, Z.Zhor { id: zhor; fsActive: Kozy.fsActive; cPill: "#1effffff"; pillRadius: Theme.radius; anchors.verticalCenter: parent.verticalCenter }, M.Vpn {}, M.Layout {}, M.Dnd {}, M.Volume {}, M.Network {}, M.Bluetooth {}, M.Battery {}, M.Tray {} ]
     }
     Osd {}
     // Two notification daemons cannot share the D-Bus name; in dev mode the
@@ -24,5 +26,9 @@ ShellRoot {
     IpcHandler {
         target: "dnd"
         function toggle(): void { Kozy.dnd = !Kozy.dnd }
+    }
+    IpcHandler {
+        target: "rec"
+        function toggle(): void { rec.toggle() }
     }
 }
