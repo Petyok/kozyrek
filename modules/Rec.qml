@@ -261,7 +261,7 @@ K.Pill {
             width: menu.colW; spacing: 10
             Text { text: Parse.recErrorTitle(root.m); color: K.Theme.bad; font.pixelSize: 15; font.bold: true; wrapMode: Text.Wrap; width: parent.width }
             Text { text: root.m.msg; color: K.Theme.dim; font.pixelSize: 12; wrapMode: Text.Wrap; maximumLineCount: 4; elide: Text.ElideRight; width: parent.width }
-            Choice { visible: root.m.retry && root.m.session !== ""; glyph: "\u{F0709}"; label: "Retry"; onPicked: root.retry() }
+            Choice { visible: root.m.retry && (root.m.session !== "" || root.m.during === "record"); glyph: "\u{F0709}"; label: "Retry"; onPicked: root.retry() }
             Choice { visible: root.m.session !== ""; glyph: "\u{F09E7}"; glyphColor: K.Theme.bad; label: "Delete recording"; onPicked: root.verb(["discard"], "idle") }
             Choice { visible: root.m.session === "" || !root.m.retry; glyph: "\u{F0156}"; label: "Dismiss"; onPicked: root.verb(["dismiss"], "idle") }
         }

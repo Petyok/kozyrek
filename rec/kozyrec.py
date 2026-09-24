@@ -26,6 +26,7 @@ import state, capture, prune  # noqa: E402
 SCRIPT = os.path.abspath(__file__)
 START_GRACE_S = 20      # a `starting` older than this with no recorder is stale
 CANCEL_GRACE_S = 15     # a worker may die this long after `cancel` without being an error
+STOP_REISSUE_S = 5      # a `stopping` this old on a still-active unit gets its stop job again
 LIVE_EVERY_S = 5
 
 
@@ -60,12 +61,17 @@ def reconcile(rec, now=None):
     s, session = rec["state"], rec.get("session")
     age = now - float(rec.get("at") or 0)
 
+    # Every repair below acts only on a definite answer from systemd: a
+    # timed-out `systemctl is-active` (None) must not kill a live recording.
     if s == "starting" and age >= START_GRACE_S:
-        if capture.unit_live(capture.REC_UNIT):
+        live = capture.unit_live(capture.REC_UNIT)
+        if live is None:
+            return rec
+        if live:
             # `start` was killed after launching the recorder: adopt it.
             fields = carry(rec)
             fields.setdefault("since", rec.get("at"))
-            fields.setdefault("aec", capture.unit_live(capture.AEC_UNIT))
+            fields.setdefault("aec", capture.unit_live(capture.AEC_UNIT) is not False)
             fields.setdefault("max_min", capture.MAX_MIN)
             fields.setdefault("_bt0", capture.boot_offset())
             fields.setdefault("_gaps", [])
@@ -78,11 +84,21 @@ def reconcile(rec, now=None):
             state.rmtree(session, ignore_errors=True)
         return new or state.read()
 
-    if s in ("recording", "stopping") and not capture.unit_live(capture.REC_UNIT):
-        # The recorder is gone but _finalize never ran (crash of the user
-        # manager, power loss, reboot).
-        capture.stop_unit(capture.AEC_UNIT)
-        return capture.settle(rec, None) or state.read()
+    if s in ("recording", "stopping"):
+        rec_state = capture.unit_state(capture.REC_UNIT)
+        if rec_state is None:
+            return rec
+        if rec_state not in capture.LIVE_STATES:
+            # The recorder is gone but _finalize never ran (crash of the user
+            # manager, power loss, reboot).
+            capture.stop_unit(capture.AEC_UNIT)
+            return capture.settle(rec, None) or state.read()
+        if s == "stopping" and rec_state == "active" and age >= STOP_REISSUE_S:
+            # `stopping` was persisted but no stop job is running: the verb
+            # was killed before queueing it, or systemctl refused. Re-issuing
+            # is harmless (a stop job on a stopping unit is a no-op).
+            capture.stop_unit(capture.REC_UNIT)
+        return rec
 
     if s == "transcribing":
         pid, cancel_at = rec.get("worker_pid"), rec.get("cancel_at")
@@ -91,8 +107,8 @@ def reconcile(rec, now=None):
             return state.set("error", session, expect="transcribing", msg="transcriber died",
                              retry=True, during="transcribe") or state.read()
 
-    if (s not in ("starting", "recording", "stopping") and capture.unit_live(capture.AEC_UNIT)
-            and not capture.unit_live(capture.REC_UNIT)):
+    if (s != "starting" and capture.unit_live(capture.AEC_UNIT) is True
+            and capture.unit_live(capture.REC_UNIT) is False):
         capture.stop_unit(capture.AEC_UNIT)           # left over by a finalize that never ran
     return rec
 
@@ -107,13 +123,14 @@ def auto_stop(rec, free=None):
     # Decided from the persisted gaps, not from who appended one: a follower
     # killed between the two steps must not lose the stop.
     if any(g.get("dur_s", 0) >= capture.SUSPEND_STOP_S for g in gaps):
-        return do_stop("suspend", wait=False)
+        return do_stop("suspend", wait=False)[0]
     if free is not None and free < capture.LOW_DISK_STOP:
-        return do_stop("low_disk", wait=False)
+        return do_stop("low_disk", wait=False)[0]
     return None
 
 
 def do_stop(reason="user", wait=True):
+    """-> (record, error message or None)."""
     rec = state.read()
     if rec["state"] == "starting" and wait:
         deadline = time.monotonic() + 6
@@ -121,9 +138,14 @@ def do_stop(reason="user", wait=True):
             time.sleep(0.1)
             rec = state.read()
     if rec["state"] == "recording":
-        capture.write_marker(rec["session"], reason)
+        # Queue the stop job first, persist `stopping` second: killed in
+        # between, _finalize still lands in ask (it accepts recording too).
+        mine = capture.write_marker(rec["session"], reason)
+        if not capture.stop_unit(capture.REC_UNIT):
+            if mine:                                   # don't label a later stop
+                capture.clear_marker(rec["session"])
+            return state.read(), "Could not stop the recorder (systemd did not answer)"
         state.set("stopping", rec["session"], expect="recording", **carry(rec))
-        capture.stop_unit(capture.REC_UNIT)
     elif rec["state"] == "stopping":
         capture.stop_unit(capture.REC_UNIT)          # re-issuing a stop job is a no-op
     if wait:
@@ -132,12 +154,12 @@ def do_stop(reason="user", wait=True):
             rec = state.read()
             if rec["state"] not in ("recording", "stopping"):
                 break
-            if not capture.unit_live(capture.REC_UNIT):
+            if capture.unit_live(capture.REC_UNIT) is False:
                 rec = reconcile(rec)
                 if rec["state"] not in ("recording", "stopping"):
                     break
             time.sleep(0.1)
-    return state.read()
+    return state.read(), None
 
 
 def with_live(rec, live=None):
@@ -171,7 +193,12 @@ def cmd_start():
         state.emit(state.error_line(f"Less than {need // 2**20} MB free in {state.CALLS}",
                                     during="record", retry=True))
         return 1
-    if capture.unit_live(capture.REC_UNIT):
+    live = capture.unit_live(capture.REC_UNIT)
+    if live is None:
+        state.emit(state.error_line("systemd --user did not answer; try again", during="record",
+                                    retry=True))
+        return 1
+    if live:
         state.emit(state.error_line("A recorder unit is already running", during="record", retry=True))
         return 1
 
@@ -193,7 +220,7 @@ def cmd_start():
         fields = {"since": time.time(), "aec": aec, "device": mic, "max_min": capture.MAX_MIN,
                   "_bt0": capture.boot_offset(), "_gaps": [], "_sinks": [capture.default_sink()]}
         state.update("starting", session, **fields)
-        if not capture.wait_audio(session) and not capture.unit_live(capture.REC_UNIT):
+        if not capture.wait_audio(session) and capture.unit_live(capture.REC_UNIT) is False:
             raise capture.CaptureError("The recorder stopped right away")
     except (capture.CaptureError, OSError) as e:
         capture.stop_unit(capture.REC_UNIT, block=True)
@@ -214,7 +241,11 @@ def cmd_stop(argv):
     if "--reason" in argv:
         i = argv.index("--reason")
         reason = argv[i + 1] if i + 1 < len(argv) else reason
-    state.emit(with_live(do_stop(reason)))
+    rec, err = do_stop(reason)
+    if err:
+        state.emit(state.error_line(err, session=rec.get("session"), during="record", retry=True))
+        return 1
+    state.emit(with_live(rec))
     return 0
 
 

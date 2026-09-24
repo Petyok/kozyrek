@@ -124,19 +124,36 @@ def disk_free(path):
 
 
 # ── systemd units ──────────────────────────────────────────────────────────
+UNIT_STATES = ("active", "reloading", "refreshing", "activating", "deactivating",
+               "inactive", "failed", "maintenance")
+LIVE_STATES = ("active", "reloading", "refreshing", "activating", "deactivating")
+
+
 def unit_state(unit):
-    """active | activating | deactivating | inactive | failed | …"""
+    """active | activating | deactivating | inactive | failed | … — or None
+    when systemd could not be asked (timeout, bus error, odd output). Only
+    rc 0 (active), rc 3 (not active) and rc 4 (no such unit — a collected
+    transient unit prints "inactive" with rc 4 on systemd 261) with one known
+    word are answers; anything else is unknown, and unknown must never
+    trigger a repair."""
     rc, out = run(["systemctl", "--user", "is-active", unit])
-    return out.strip() or "inactive"
+    word = out.strip()
+    if rc in (0, 3, 4) and word in UNIT_STATES:
+        return word
+    return None
 
 
 def unit_live(unit):
-    return unit_state(unit) in ("active", "activating", "deactivating", "reloading")
+    """True | False | None (unknown)."""
+    s = unit_state(unit)
+    return None if s is None else s in LIVE_STATES
 
 
 def stop_unit(unit, block=False):
-    run(["systemctl", "--user", "stop"] + ([] if block else ["--no-block"]) + [unit + ".service"],
-        timeout=15)
+    """Queue (or, with block, run) a stop job. -> True if systemctl took it."""
+    rc, _ = run(["systemctl", "--user", "stop"] + ([] if block else ["--no-block"])
+                + [unit + ".service"], timeout=15)
+    return rc == 0
 
 
 def aec_conf(mic):
@@ -290,7 +307,7 @@ def wait_audio(session, timeout=4.0):
     while time.monotonic() < deadline:
         if all(ogg_pages(p) >= 3 for p in files):
             return True
-        if not unit_live(REC_UNIT):
+        if unit_live(REC_UNIT) is False:
             return False
         time.sleep(0.1)
     return False
@@ -354,6 +371,13 @@ def write_marker(session, reason):
     return True
 
 
+def clear_marker(session):
+    try:
+        os.unlink(os.path.join(session, ".stop_reason"))
+    except OSError:
+        pass
+
+
 def settle(rec, service_result, expect=("recording", "stopping")):
     """Recording is over: write session.json and move to ask — or, with no
     audio at all, to error and remove the empty session. Idempotent through
@@ -386,10 +410,7 @@ def settle(rec, service_result, expect=("recording", "stopping")):
     state.write_json(os.path.join(session, "session.json"), meta)
     new = state.set("ask", session, expect=expect, **state.ask_fields(session))
     if new is not None:
-        try:
-            os.unlink(os.path.join(session, ".stop_reason"))
-        except OSError:
-            pass
+        clear_marker(session)
     return new
 
 
@@ -433,7 +454,8 @@ def live_fields(rec):
     free = disk_free(rec.get("session") or state.CALLS)
     mic = mic_state(rec.get("device") or "")
     calls = live_calls()
-    aec_alive = unit_state(AEC_UNIT) == "active" if rec.get("aec") else False
+    # Unknown (systemd didn't answer) is not evidence of a dead canceller.
+    aec_alive = unit_state(AEC_UNIT) in ("active", None) if rec.get("aec") else False
     return {"mic": mic, "call": calls, "disk_left_min": int(free / BYTES_PER_S / 60),
             "max_min": MAX_MIN,
             "warn": pick_warn(mic, rec.get("aec"), aec_alive, calls,

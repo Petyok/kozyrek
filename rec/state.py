@@ -159,8 +159,10 @@ def emit(obj):
 
 def error_line(msg, **fields):
     """A transient error line (not persisted): the verb failed before any
-    state changed, e.g. start refused by preflight."""
-    return {"ev": "error", "msg": msg, "at": time.time(), **fields}
+    state changed, e.g. start refused by preflight. It carries no `at`: `at`
+    means "time of the persisted transition", and a fresh stamp here would
+    make the bar drop the next replay of the (older) persisted state."""
+    return {"ev": "error", "msg": msg, **fields}
 
 
 def ask_fields(session):

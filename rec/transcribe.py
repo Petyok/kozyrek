@@ -20,6 +20,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import traceback
@@ -85,6 +86,8 @@ def _check_cancel():
 
 # ---- audio ---------------------------------------------------------------------------
 
+FFMPEG_SIGNAL_EXIT = 255  # ffmpeg's exit code after a trapped termination signal
+
 
 class TrackReader:
     """Sequential 16 kHz mono float32 decode of one track through an ffmpeg pipe."""
@@ -92,13 +95,20 @@ class TrackReader:
     def __init__(self, path):
         self.path = path
         self.pos = 0  # samples delivered so far
+        # stderr goes to a file, not a pipe: a chatty decoder must never block on
+        # a full stderr pipe while we only drain stdout.
+        self.err = tempfile.TemporaryFile()
         self.proc = subprocess.Popen(
             ["ffmpeg", "-nostdin", "-v", "error", "-i", str(path),
              "-ac", "1", "-ar", str(SR), "-f", "f32le", "-"],
-            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=self.err,
         )
 
     def read(self, n):
+        """Up to n samples; a short (or empty) block means the track ended. The
+        end is only accepted when ffmpeg exited cleanly: a killed decoder (cancel's
+        SIGTERM hits the whole process group) must not look like the track's end,
+        or a truncated checkpoint would be committed."""
         want = n * 4
         buf = bytearray()
         while len(buf) < want:
@@ -106,15 +116,29 @@ class TrackReader:
             if not chunk:
                 break
             buf += chunk
+        if len(buf) < want:
+            self._check_exit()
         usable = len(buf) - len(buf) % 4
         block = np.frombuffer(bytes(buf[:usable]), dtype=np.float32)
         self.pos += block.size
-        if block.size == 0 and self.pos == 0:
-            err = self.proc.stderr.read().decode("utf-8", "replace").strip().splitlines()
-            if self.proc.wait() != 0:
-                raise Failure("audio unreadable", retry=False) from RuntimeError(
-                    f"{self.path}: {err[-1] if err else 'ffmpeg failed'}")
         return block
+
+    def _check_exit(self):
+        rc = self.proc.wait()
+        self.err.seek(0)
+        err = self.err.read()[-2000:].decode("utf-8", "replace").strip().splitlines()
+        if rc == 0:
+            return
+        # ffmpeg traps SIGTERM/SIGINT/SIGHUP and exits 255 (never used for errors);
+        # an untrappable kill (OOM killer) shows up as a negative code.
+        if _cancel.is_set() or rc in (FFMPEG_SIGNAL_EXIT, -signal.SIGTERM):
+            # The worker's own handler may not have run yet: the group got the signal too.
+            _cancel.set()
+            raise Cancelled()
+        cause = RuntimeError(f"{self.path}: ffmpeg rc={rc}: {err[-1] if err else ''}")
+        if rc < 0:
+            raise Failure("audio decoder died", retry=True) from cause
+        raise Failure("audio unreadable", retry=False) from cause
 
     def skip_to(self, sample):
         while self.pos < sample:
@@ -125,8 +149,8 @@ class TrackReader:
         if self.proc.poll() is None:
             self.proc.kill()
         self.proc.wait()
-        for f in (self.proc.stdout, self.proc.stderr):
-            f.close()
+        self.proc.stdout.close()
+        self.err.close()
 
     def __enter__(self):
         return self
@@ -259,6 +283,7 @@ class Progress:
     def __init__(self, session):
         self.session = session
         self.lock = threading.Lock()
+        self._write_lock = threading.Lock()
         self.costs = {s: 1.0 for s in STAGES}
         self.stage, self.track = "prepare", None
         self.frac, self.base, self.scale = 0.0, 0.0, 1.0 / len(STAGES)
@@ -358,18 +383,25 @@ class Progress:
 
     def _run(self):
         while not self._stop.wait(0.25):
-            self.flush()
+            try:
+                self.flush()
+            except OSError as exc:  # e.g. disk full: the bar just freezes, the job goes on
+                print(f"progress write failed: {exc}", file=sys.stderr, flush=True)
 
     def flush(self, force=False):
-        now = time.monotonic()
-        if force or (self.dirty and now - self.last_write >= 1.0) or now - self.last_write >= 3.0:
-            snap = self.snapshot()
-            self.dirty, self.last_write = False, now
-            state.write_json(state.PROGRESS, snap)
+        # One writer at a time: the heartbeat thread and the worker's final flush
+        # share state.write_json's per-pid tmp name, so unserialised writes race
+        # (one rename finds the tmp already gone).
+        with self._write_lock:
+            now = time.monotonic()
+            if force or (self.dirty and now - self.last_write >= 1.0) or now - self.last_write >= 3.0:
+                snap = self.snapshot()
+                self.dirty, self.last_write = False, now
+                state.write_json(state.PROGRESS, snap)
 
     def stop(self):
         self._stop.set()
-        self._thread.join(timeout=2)
+        self._thread.join()
 
 
 def clear_progress(session):
@@ -417,6 +449,7 @@ def _diarize(lib, ck, tracks, est, prog, perf):
                         st.push(block)
                         prog.advance(done_s + st.labelled_seconds(), name)
                         _check_cancel()
+                    _check_cancel()  # never commit a checkpoint of a cancelled pass
                     st.finish()
                     duration = rd.pos / SR
                     off = tracks[name]["offset"]
@@ -493,7 +526,9 @@ def _asr(lib, ck, tracks, plan, prog, perf):
                                 st.push(block)
                                 prog.advance(done_s + (rd.pos / SR + off - begin_s), t)
                                 _check_cancel()
+                            _check_cancel()
                             words, langs = st.finish()
+                        _check_cancel()
                         ck.append_asr(t, {
                             "key": _island_key((s, e)), "s": round(begin_s, 3), "e": round(e, 3),
                             "lang": langs, "words": [[w, round(a, 3), round(b, 3)] for w, a, b in words],
@@ -732,6 +767,8 @@ def worker_main(session_dir):
     prog = Progress(session)
     try:
         doc, md, js = run_pipeline(session, prog)
+        prog.stop()  # heartbeat thread ends before the last write
+        prog.flush(force=True)
     except Cancelled:
         prog.stop()
         print("worker cancelled", file=sys.stderr, flush=True)
@@ -744,8 +781,6 @@ def worker_main(session_dir):
         if rec:
             clear_progress(session)
         return 1
-    prog.flush(force=True)
-    prog.stop()
     rec = state.set("done", session, expect="transcribing", transcript=str(md), json=str(js),
                     duration_s=doc["duration_s"], speakers=len(doc["speakers"]))
     if rec:

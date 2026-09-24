@@ -1,12 +1,18 @@
-"""Worker bookkeeping: progress bar monotonicity and resumable island logs."""
+"""Worker bookkeeping: progress bar, resumable island logs, decoder end-of-track."""
 
 import os
+import signal
+import subprocess
 import tempfile
+import threading
+import time
 import unittest
+from unittest import mock
 
 _tmp = tempfile.TemporaryDirectory()
 os.environ["KOZYREC_STATE_DIR"] = _tmp.name  # before importing state
 
+import state  # noqa: E402
 import transcribe  # noqa: E402
 
 
@@ -44,6 +50,39 @@ class ProgressBar(unittest.TestCase):
         finally:
             p.stop()
 
+    def test_concurrent_flushes_never_collide_even_with_slow_fsync(self):
+        # The heartbeat thread and the worker's final flush write the same file
+        # through one per-pid tmp name; unserialised, one rename found the tmp
+        # gone and the FileNotFoundError failed a finished transcription.
+        real_fsync = os.fsync
+
+        def slow_fsync(fd):
+            time.sleep(0.01)
+            real_fsync(fd)
+
+        p = transcribe.Progress("/s")
+        errors = []
+
+        def writer():
+            try:
+                for _ in range(40):
+                    p.flush(force=True)
+            except OSError as exc:
+                errors.append(exc)
+
+        try:
+            p.begin("diarize", 100)
+            with mock.patch.object(state.os, "fsync", slow_fsync):
+                threads = [threading.Thread(target=writer) for _ in range(2)]
+                for t in threads:
+                    t.start()
+                for t in threads:
+                    t.join()
+        finally:
+            p.stop()
+        self.assertEqual(errors, [])
+        self.assertEqual(state.read_json(state.PROGRESS)["session"], "/s")
+
 
 class IslandLog(unittest.TestCase):
     def test_torn_last_line_is_dropped_and_appends_stay_readable(self):
@@ -55,6 +94,46 @@ class IslandLog(unittest.TestCase):
             ck.repair_asr("mic")
             ck.append_asr("mic", {"key": "c", "words": []})
             self.assertEqual([r["key"] for r in ck.asr_records("mic")], ["a", "c"])
+
+
+class DecoderEnd(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.dir = tempfile.TemporaryDirectory()
+        cls.wav = os.path.join(cls.dir.name, "t.wav")
+        subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "sine=f=300:d=30",
+                        "-ac", "1", "-ar", "16000", cls.wav], check=True)
+        cls.bad = os.path.join(cls.dir.name, "bad.opus")
+        with open(cls.bad, "wb") as f:
+            f.write(b"OggS" + os.urandom(4000))
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.dir.cleanup()
+
+    def tearDown(self):
+        transcribe._cancel.clear()
+
+    def drain(self, rd):
+        while rd.read(transcribe.DIAR_BLOCK).size:
+            pass
+
+    def test_clean_end_of_track_delivers_every_sample(self):
+        with transcribe.TrackReader(self.wav) as rd:
+            self.drain(rd)
+            self.assertEqual(rd.pos, 30 * 16000)
+
+    def test_decoder_killed_by_cancel_is_cancel_not_end_of_track(self):
+        with transcribe.TrackReader(self.wav) as rd:
+            rd.read(transcribe.DIAR_BLOCK)
+            os.kill(rd.proc.pid, signal.SIGTERM)  # cancel signals the whole process group
+            with self.assertRaises(transcribe.Cancelled):
+                self.drain(rd)
+
+    def test_unreadable_audio_is_a_non_retryable_failure(self):
+        with transcribe.TrackReader(self.bad) as rd, self.assertRaises(transcribe.Failure) as cm:
+            self.drain(rd)
+        self.assertEqual((cm.exception.msg, cm.exception.retry), ("audio unreadable", False))
 
 
 if __name__ == "__main__":

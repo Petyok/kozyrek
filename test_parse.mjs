@@ -83,6 +83,16 @@ test("recording re-emits with the same `at` update live fields", () => {
     m = P.recReduce(m, { ev: "state", state: "recording", at: 7, session: "/c/s", since: 1, mic: "muted", warn: "mic_muted" }, 0);
     assert.equal(m.mic, "muted"); assert.equal(m.warn, "mic_muted"); assert.equal(m.since, 1);
 });
+test("a transient error (no `at`) does not block the replayed persisted state", () => {
+    let m = P.recReduce(P.recInit(), { ev: "state", state: "recording", at: 50, session: "/c/s", since: 1 }, 0);
+    m = P.recReduce(m, { ev: "error", msg: "already recording", retry: false }, 0);
+    assert.equal(m.state, "error"); assert.equal(m.at, 50);
+    m = P.recReduce(m, { ev: "state", state: "recording", at: 50, session: "/c/s", since: 1 }, 0);
+    assert.equal(m.state, "recording");
+    // …while a persisted error does advance it
+    m = P.recReduce(m, { ev: "error", state: "error", at: 60, msg: "recorder failed", session: "/c/s" }, 0);
+    assert.equal(P.recReduce(m, { ev: "state", state: "recording", at: 50, session: "/c/s", since: 1 }, 0), m);
+});
 test("local optimistic states never advance the ordering stamp", () => {
     let m = P.recReduce(P.recInit(), { ev: "state", state: "idle", at: 10 }, 0);
     m = P.recReduce(m, { ev: "local", state: "starting" }, 0);

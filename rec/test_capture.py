@@ -12,6 +12,34 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import state, prune, capture, kozyrec  # noqa: E402
 
 
+@contextlib.contextmanager
+def fake_systemd(units=None, broken=False, stop_ok=True):
+    """Replace capture.run for systemctl: units = {name: is-active word}
+    (missing → a collected unit: "inactive", rc 4); broken → every call times
+    out like a hung user manager. Yields the list of stop calls made."""
+    units = units or {}
+    stops, real = [], capture.run
+
+    def run(cmd, timeout=5):
+        if cmd[:2] != ["systemctl", "--user"]:
+            return real(cmd, timeout)
+        if broken:
+            return 127, "Command '...' timed out after 5 seconds"
+        if cmd[2] == "is-active":
+            word = units.get(cmd[3], None)
+            return (0 if word == "active" else 3 if word else 4), (word or "inactive") + "\n"
+        if cmd[2] == "stop":
+            stops.append(cmd[-1].removesuffix(".service"))
+            return (0 if stop_ok else 1), ""
+        return 1, ""
+
+    capture.run = run
+    try:
+        yield stops
+    finally:
+        capture.run = real
+
+
 def _reset():
     try:
         os.unlink(state.STATE)
@@ -140,7 +168,11 @@ def test_gaps_ignore_jitter_and_are_recorded_once():
 
 # ── repair ─────────────────────────────────────────────────────────────────
 def test_dead_transcriber_becomes_a_retryable_error_but_not_while_cancelling():
-    kozyrec.capture.unit_live = lambda unit: False
+    with fake_systemd():
+        _dead_transcriber_checks()
+
+
+def _dead_transcriber_checks():
     dead = 2 ** 22 + 12345                                              # above pid_max: never alive
     _reset()
     rec = state.set("transcribing", "/s/1", since=1.0, worker_pid=dead, cancel_at=time.time())
@@ -152,8 +184,11 @@ def test_dead_transcriber_becomes_a_retryable_error_but_not_while_cancelling():
 
 
 def test_stale_starting_without_a_recorder_goes_idle_and_removes_the_empty_dir():
-    kozyrec.capture.unit_live = lambda unit: False
-    kozyrec.capture.stop_unit = lambda unit, block=False: None
+    with fake_systemd():
+        _stale_starting_checks()
+
+
+def _stale_starting_checks():
     s = _session("2026-09-25_09-00-00", [])
     _reset()
     state.set("starting", s)
@@ -164,12 +199,11 @@ def test_stale_starting_without_a_recorder_goes_idle_and_removes_the_empty_dir()
 
 
 def test_discard_deletes_only_inside_calls_and_refuses_while_live():
-    with contextlib.redirect_stdout(io.StringIO()):
+    with contextlib.redirect_stdout(io.StringIO()), fake_systemd():
         _discard_checks()
 
 
 def _discard_checks():
-    kozyrec.capture.unit_live = lambda unit: False
     s = _session("2026-09-25_08-00-00", ["mic.opus"])
     _reset()
     state.set("recording", s)
@@ -180,6 +214,61 @@ def _discard_checks():
     state.set("error", outside, msg="x")
     kozyrec.cmd_discard()
     assert os.path.isdir(outside) and state.read()["state"] == "idle"
+
+
+def test_unanswered_systemctl_never_ends_a_live_recording():
+    s = _session("2026-09-25_07-00-00", ["mic.opus", "desktop.opus"])
+    _reset()
+    rec = state.set("recording", s, since=time.time() - 60, aec=True)
+    with fake_systemd(broken=True) as stops:
+        assert capture.unit_state(capture.REC_UNIT) is None
+        assert kozyrec.reconcile(rec, now=rec["at"] + 3600)["state"] == "recording"
+        st = state.set("starting", s, expect="recording")
+        assert kozyrec.reconcile(st, now=st["at"] + 3600)["state"] == "starting"
+        assert stops == [] and os.path.isdir(s)
+        state.set("idle")
+        real_mic, capture.find_mic = capture.find_mic, lambda: "alsa_input.test"
+        try:
+            with contextlib.redirect_stdout(io.StringIO()) as out:
+                assert kozyrec.cmd_start() == 1                  # refuses, doesn't guess
+        finally:
+            capture.find_mic = real_mic
+        line = json.loads(out.getvalue())
+        assert line["ev"] == "error" and "at" not in line
+    assert stops == [] and state.read()["state"] == "idle"
+    # A definite answer still repairs: a collected unit (rc 4) is gone.
+    with fake_systemd() as stops:
+        assert capture.unit_live(capture.REC_UNIT) is False
+        assert capture.unit_state("kozyrec-aec") == "inactive"
+
+
+def test_stuck_stopping_gets_its_stop_job_again():
+    s = _session("2026-09-25_06-00-00", ["mic.opus", "desktop.opus"])
+    _reset()
+    rec = state.set("stopping", s, since=time.time() - 60)
+    live = {capture.REC_UNIT: "active", capture.AEC_UNIT: "active"}
+    with fake_systemd(live) as stops:
+        kozyrec.reconcile(rec, now=rec["at"] + 1)                # the stop may just be slow
+        assert stops == []
+        assert kozyrec.reconcile(rec, now=rec["at"] + kozyrec.STOP_REISSUE_S + 1)["state"] == "stopping"
+        assert stops == [capture.REC_UNIT]
+    with fake_systemd({capture.REC_UNIT: "deactivating"}) as stops:
+        kozyrec.reconcile(rec, now=rec["at"] + 60)               # a stop job is running
+        assert stops == []
+
+
+def test_a_refused_stop_keeps_recording_and_leaves_no_stop_reason():
+    s = _session("2026-09-25_05-00-00", ["mic.opus", "desktop.opus"])
+    _reset()
+    state.set("recording", s, since=time.time() - 60)
+    with fake_systemd({capture.REC_UNIT: "active"}, stop_ok=False):
+        rec, err = kozyrec.do_stop("user", wait=False)
+    assert err and rec["state"] == "recording"
+    assert capture.read_marker(s) is None                        # a later max_duration isn't "user"
+
+
+def test_transient_errors_carry_no_at():
+    assert "at" not in state.error_line("No microphone found", during="record")
 
 
 # ── detection ──────────────────────────────────────────────────────────────
