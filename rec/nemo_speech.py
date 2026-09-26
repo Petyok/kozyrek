@@ -268,8 +268,8 @@ class Recognizer:
         self.handle = _P()
         lib.check(lib.asr_create(C.byref(cfg), C.byref(self.handle)))
 
-    def stream(self, language="auto"):
-        return AsrStream(self, language)
+    def stream(self, language="auto", interim=False):
+        return AsrStream(self, language, interim)
 
     def close(self):
         if self.handle:
@@ -311,14 +311,19 @@ def _read_result(lib, result):
 
 
 class AsrStream:
-    def __init__(self, recognizer, language):
+    def __init__(self, recognizer, language, interim=False):
         self.lib = recognizer.lib
         opts = _request_options(self.lib, language)
+        if interim:
+            opts.interim_results = True
         self.handle = _P()
         self.lib.check(
             self.lib.asr_streaming_recognize(recognizer.handle, C.byref(opts), C.byref(self.handle))
         )
         self.finals = []
+        self._interim = interim
+        self._texts = []  # punctuated transcripts of the finals, kept only with interim=True
+        self._partial = ""
 
     def push(self, block):
         """Buffer samples, then decode every complete chunk (synchronously)."""
@@ -338,10 +343,27 @@ class AsrStream:
                 final = self.lib.asr_result_is_final(result)
                 if final:
                     self.finals.append(_read_result(self.lib, result))
+                if self._interim:
+                    self._keep_text(result, final)
             finally:
                 self.lib.asr_result_destroy(result)
             if not final:
                 return
+
+    def _keep_text(self, result, final):
+        text = ""
+        if self.lib.asr_result_alternative_count(result):
+            text = _text(self.lib.asr_result_transcript(result, 0)).strip()
+        if final:
+            self._texts.append(text)
+            self._partial = ""
+        else:
+            self._partial = text
+
+    @property
+    def text(self):
+        """The punctuated transcript so far: every final plus the live interim (interim=True)."""
+        return " ".join(t for t in self._texts + [self._partial] if t)
 
     def finish(self):
         """Flush the tail; returns (words [(text, start_s, end_s)], languages [code])."""

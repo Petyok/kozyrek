@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 const src = readFileSync(new URL("./lib/parse.js", import.meta.url), "utf8");
 const P = new Function(src + "; return { ipMonitor, stepVolume, brightnessArg, brightnessctl, wifiGlyph, batteryGlyph, wsSort, " +
     "recInit, recParse, recReduce, recLive, recClick, recToggle, fmtClock, fmtEta, recEta, recPillText, recGlyph, " +
-    "recErrorTitle, recAskLine, recDoneBody, recDoneArgv };")();
+    "recErrorTitle, recAskLine, recDoneBody, recDoneArgv, dictLang };")();
 
 test("ipMonitor parses add/delete lines", () => {
     assert.deepEqual(P.ipMonitor("5: wg0: <POINTOPOINT,NOARP,UP,LOWER_UP> mtu 1420 qdisc noqueue state UNKNOWN group default"), { name: "wg0", deleted: false });
@@ -146,4 +146,10 @@ test("recDoneArgv keeps paths out of the shell script", () => {
 test("rec glyphs are single codepoints; recording/stopping draw the dot instead", () => {
     for (const s of ["idle", "ask", "transcribing", "done", "error"]) assert.equal([...P.recGlyph(s)].length, 1, s);
     assert.equal(P.recGlyph("recording"), ""); assert.equal(P.recGlyph("stopping"), "");
+});
+test("dictLang follows the last letter, past punctuation and digits", () => {
+    assert.equal(P.dictLang("Привет, world!"), "EN");
+    assert.equal(P.dictLang("Open the PR, пожалуйста."), "RU");
+    assert.equal(P.dictLang("ёж 42…"), "RU");
+    assert.equal(P.dictLang("12:30 — "), "");
 });

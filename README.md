@@ -28,6 +28,13 @@ The call recorder is one pill: click to record a call, click again, answer
 headphones (echo cancellation on the mic, the other side taken from the
 speaker output). Setup, internals and limits: [docs/rec.md](docs/rec.md).
 
+Dictation, macOS style: tap right Cmd and talk, Russian and English, mixed
+freely. The words land in whatever window has focus while you speak; tap
+again, or pause for 10 s, to stop. A frosted capsule at the bottom shows the
+mic level and the latest words. Recognition runs on the laptop's CPU with the
+call recorder's model, loaded only for the dictation. Setup, internals and
+limits: [docs/dict.md](docs/dict.md).
+
 ## Install
 
 ```
@@ -41,7 +48,7 @@ while `~/.config/quickshell/shell.qml` exists — move it away first.
 One module per file under `modules/`; `shell.qml` is the layout. `Theme.qml`
 holds the palette, `Kozy.qml` the shared state (fullscreen flag, DND, the one
 open popup). Pure helpers live in `lib/parse.js` (`node --test test_parse.mjs`);
-the recorder's Python helper lives in `rec/` with its own tests;
+the recorder's and the dictation's Python helpers live in `rec/` and `dict/` with their own tests;
 `./test_kozyrek.sh` checks the config loads without QML warnings.
 
 Dev mode: `KOZYREK_DEV=1 qs -p ~/kozyrek` puts the bar at the bottom, ignores

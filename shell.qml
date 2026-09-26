@@ -15,6 +15,7 @@ ShellRoot {
         right:  [ M.Rec { id: rec }, Z.Zhor { id: zhor; fsActive: Kozy.fsActive; cPill: "#1effffff"; pillRadius: Theme.radius; anchors.verticalCenter: parent.verticalCenter }, M.Vpn {}, M.Layout {}, M.Dnd {}, M.Volume {}, M.Network {}, M.Bluetooth {}, M.Battery {}, M.Tray {} ]
     }
     Osd {}
+    Dictation { id: dict }
     // Two notification daemons cannot share the D-Bus name; in dev mode the
     // live HyprPanel owns it, so this stays unloaded there.
     Loader { active: !Kozy.devMode; sourceComponent: Notifications {} }
@@ -30,5 +31,9 @@ ShellRoot {
     IpcHandler {
         target: "rec"
         function toggle(): void { rec.toggle() }
+    }
+    IpcHandler {
+        target: "dict"
+        function toggle(): void { dict.toggle() }
     }
 }
