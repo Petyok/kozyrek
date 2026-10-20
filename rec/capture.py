@@ -204,8 +204,14 @@ context.modules = [
 
 
 def _branch(name, props, target, bitrate, out):
+    # min-buffers=32 (PipeWire's audioconvert maximum): pipewiresrc waits on the
+    # clock before every buffer, and those waits can run 70-150 ms when a call app
+    # pulls the graph down to 256-sample cycles. With the default 2 buffers PipeWire
+    # dropped ~3 of 4 cycles ("out of buffers"), leaving 21 ms fragments that
+    # audiorate padded into a "complete" silent track. ponytail: 32 cycles is 170 ms
+    # at quantum 256; longer waits drop again; the real fix is removing the clock wait.
     src = ["pipewiresrc", f"name={name}", "client-name=kozyrec",
-           "do-timestamp=true", "provide-clock=false"]
+           "do-timestamp=true", "provide-clock=false", "min-buffers=32"]
     if target:
         src.append(f"target-object={target}")
     src.append("stream-properties=props," + ",".join(f"{k}=(string){v}" for k, v in props))

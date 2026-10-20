@@ -10,6 +10,9 @@
 - `dict` IPC target: `qs -c kozyrek ipc call dict toggle`.
 - `rec/nemo_speech.py`: interim transcripts (`stream(interim=True)` + `.text`).
 
+### Fixed
+- Call recorder: the other side of a call is recorded in full again. When the call app (Google Meet in Chrome) pulled PipeWire down to short cycles, the speaker-output track kept only ~21 ms of every ~120 ms and the transcript credited the remote speaker's words, heard through the mic, to "Me". The recorder's PipeWire inputs now negotiate 32 buffers instead of 2 (`min-buffers=32` in `rec/capture.py`); under the same conditions the loss went from 3 of 6 runs to 0 of 12.
+
 ## [0.1.4] - 2026-09-23
 
 ### Added
