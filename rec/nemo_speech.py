@@ -1,7 +1,8 @@
 """ctypes bindings for the NeMo-Speech.cpp C ABI (include/nemo_speech/asr.h, diar.h).
 
-Only the subset kozyrec needs: CPU offline-geometry diarization streams and
-cache-aware streaming ASR with word timestamps. Structs mirror the headers of
+Only the subset kozyrec needs: offline-geometry diarization streams and
+cache-aware streaming ASR with word timestamps, on the CPU or (on the offload
+host, rec/offload.py) a GPU. Structs mirror the headers of
 NeMo-Speech.cpp 97a15afa5c; every struct is size-prefixed, so a header that
 grows at the tail stays compatible.
 """
@@ -104,6 +105,8 @@ _SIGS = {
     "nemo_speech_asr_recognition_options_default": (_Options, []),
     "nemo_speech_asr_create": (C.c_int, [C.POINTER(_RecognizerConfig), C.POINTER(_P)]),
     "nemo_speech_asr_destroy": (None, [_P]),
+    "nemo_speech_asr_recognize_f32": (
+        C.c_int, [_P, C.POINTER(_Options), _F32P, C.c_size_t, C.c_int32, C.POINTER(_P)]),
     "nemo_speech_asr_streaming_recognize": (C.c_int, [_P, C.POINTER(_Options), C.POINTER(_P)]),
     "nemo_speech_asr_stream_push_f32": (C.c_int, [_P, _F32P, C.c_size_t, C.c_int32]),
     "nemo_speech_asr_stream_finish": (C.c_int, [_P]),
@@ -176,12 +179,12 @@ def _text(raw):
 
 
 class Diarizer:
-    def __init__(self, lib, model_path, preset="v3-offline"):
+    def __init__(self, lib, model_path, preset="v3-offline", gpu=-1):
         self.lib = lib
         cfg = _DiarConfig(
             size=C.sizeof(_DiarConfig),
             model_path=str(model_path).encode(),
-            gpu=-1,  # the ABI defaults to GPU 0 when unset
+            gpu=gpu,  # -1 = CPU; the ABI defaults to GPU 0 when unset
             preset=preset.encode() if preset else None,
             left_context_frames=-1,
         )
@@ -247,26 +250,43 @@ class DiarStream:
 class Recognizer:
     # Cache-aware right context in 80 ms frames; chunk = (1 + R) * 80 ms. 13 → 1.12 s,
     # the best published WER and the cheapest per audio second on CPU.
-    def __init__(self, lib, model_path, right_context=13):
+    # right_context=None: an offline-only model (Parakeet TDT), recognize() only.
+    def __init__(self, lib, model_path, right_context=13, gpu=-1):
         self.lib = lib
-        self._backend = _Backend(size=C.sizeof(_Backend), gpu=-1)
+        self._backend = _Backend(size=C.sizeof(_Backend), gpu=gpu)  # -1 = CPU
         self._model = _Model(size=C.sizeof(_Model), path=str(model_path).encode(), name=None)
-        # Passing the streaming struct overrides every field: keep the CTC defaults.
-        self._streaming = _Streaming(
-            size=C.sizeof(_Streaming),
-            chunk_size=0.16,
-            ctc_left_padding=1.92,
-            ctc_right_padding=1.92,
-            rnnt_right_context=right_context,
-        )
+        streaming = None
+        if right_context is not None:
+            # Passing the streaming struct overrides every field: keep the CTC defaults.
+            self._streaming = _Streaming(
+                size=C.sizeof(_Streaming),
+                chunk_size=0.16,
+                ctc_left_padding=1.92,
+                ctc_right_padding=1.92,
+                rnnt_right_context=right_context,
+            )
+            streaming = C.pointer(self._streaming)
         cfg = _RecognizerConfig(
             size=C.sizeof(_RecognizerConfig),
             backend=C.pointer(self._backend),
             model=C.pointer(self._model),
-            streaming=C.pointer(self._streaming),
+            streaming=streaming,
         )
         self.handle = _P()
         lib.check(lib.asr_create(C.byref(cfg), C.byref(self.handle)))
+
+    def recognize(self, samples, language="auto"):
+        """One full-attention pass over a whole utterance (16 kHz mono):
+        (words [(text, start_s, end_s)], languages [code])."""
+        opts = _request_options(self.lib, language)
+        keep, ptr, n = _samples(samples)
+        result = _P()
+        self.lib.check(self.lib.asr_recognize_f32(self.handle, C.byref(opts), ptr, n, SAMPLE_RATE, C.byref(result)))
+        del keep
+        try:
+            return _read_result(self.lib, result)
+        finally:
+            self.lib.asr_result_destroy(result)
 
     def stream(self, language="auto", interim=False):
         return AsrStream(self, language, interim)

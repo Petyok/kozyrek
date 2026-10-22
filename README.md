@@ -17,7 +17,7 @@ Measured on the target laptop (i5-5350U, 8 GB), 10 min idle after the switch: **
 
 | left | center | right |
 |---|---|---|
-| power menu · workspaces (app icons) · window title | [zhor](https://github.com/Petyok/zhor) · clock / calendar / weather | call recorder · VPN pills · keyboard layout · DND · volume · wifi · bluetooth · battery · tray |
+| power menu · workspaces (app icons) · window title | [zhor](https://github.com/Petyok/zhor) · clock / calendar / weather / timers + alarms · screen recording | call recorder · VPN pills · keyboard layout · DND · volume · ping · wifi · bluetooth · battery · tray |
 
 Plus: notification popups (top-right, DND, actions, images) and an OSD for
 volume / screen brightness / keyboard brightness driven over IPC.
@@ -28,12 +28,28 @@ The call recorder is one pill: click to record a call, click again, answer
 headphones (echo cancellation on the mic, the other side taken from the
 speaker output). Setup, internals and limits: [docs/rec.md](docs/rec.md).
 
+Screen recording shows next to the clock while `wf-recorder` runs: a red
+camera, the elapsed time and whether the mic is in the recording. Click stops,
+right click toggles the mic. Recording an area also dims the rest of the screen,
+rings the area in red and floats the same controls (time, mic, Stop) just
+outside it, above when there is room, so none of it lands in the video. It is
+driven by a personal script outside this repo, `~/.local/bin/screenrec.sh`
+(`status` / `mic` verbs, stop by running it again), which calls
+`qs -c kozyrek ipc call screenrec refresh` after it starts the recorder.
+
 Dictation, macOS style: tap right Cmd and talk, Russian and English, mixed
 freely. The words land in whatever window has focus while you speak; tap
 again, or pause for 10 s, to stop. A frosted capsule at the bottom shows the
 mic level and the latest words. Recognition runs on the laptop's CPU with the
 call recorder's model, loaded only for the dictation. Setup, internals and
 limits: [docs/dict.md](docs/dict.md).
+
+TV remote for a CVTE / MHShare TV (the one the MHShare phone app drives): a
+floating overlay with a touchpad that is the TV screen in miniature, d-pad,
+Back/Home/Menu and volume, plus `tv/tvctl` for keybinds and scripts. The link
+to the TV is opened on first use and dropped after 2 min idle. "Mirror my screen"
+shows the laptop screen on the TV (Cast Streaming, no browser). Protocol and
+limits: [docs/tv.md](docs/tv.md).
 
 ## Install
 

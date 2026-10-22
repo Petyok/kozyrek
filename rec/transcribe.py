@@ -12,6 +12,11 @@ desktop = remote participants only):
 
 Every stage checkpoints into <session>/.transcribe/ (atomic writes), so a
 cancelled or failed run resumes at the first unfinished island.
+
+The two model stages run on an engine: the GPU host when it is idle
+(offload.py), else the laptop. Both run the same loops (diarize_track,
+recognize_islands) and the laptop commits every result as it arrives, so a
+lost host hands over to the laptop at the island it stopped at.
 """
 
 import json
@@ -30,37 +35,40 @@ import numpy as np
 
 import merge
 import nemo_speech as ns
+import offload
 import state
 
 KOZYREC = Path(__file__).resolve().with_name("kozyrec.py")
 MODEL_DIR = Path(os.environ.get("KOZYREC_MODEL_DIR", Path.home() / ".local/share/kozyrec/models"))
+# Orukeet (Parakeet TDT 0.6B v3 fine-tune, 25 languages, oruk/orukeet @ b59c13a),
+# converted with NeMo-Speech.cpp's convert_model.py (q8_0). Offline only: one
+# full-attention pass per island. On this repo's calls it beat Nemotron 3.5
+# streaming by a wide margin (2026-10-06 A/B).
 ASR_MODEL = {
-    "file": "nemotron-3.5-asr-streaming-0.6b.q8_0.gguf",
-    "revision": "1c8deaecc64b91f034d73e08dd8b64625eb3395d",
-    "sha256": "a5c435f294eea8f88ce68dd27b8c3bfea7f777cb2fbba04fcd30eaa555f429ae",
+    "file": "orukeet-v0.1.0.q8_0.gguf",
+    "revision": "b59c13a733fce5cf193230d0fa317ee7f145a108",
+    "sha256": "f3b5569dc4a86deee279fa484bb6985572088beba4b78775218d658918e0b297",
 }
 DIAR_MODEL = {
     "file": "Nemotron-3-Diarization.q8_0.gguf",
     "revision": "f667ed73aee57d40cc39428eb768b4fd87a0a29e",
     "sha256": "08456d9e22cd9a323c0364d98375f3746d6e68507ebb705cd46438c534c7a3a1",
 }
-LANGUAGE = "auto"  # calls mix ru/en: the model detects per utterance
 DIAR_PRESET = "v3-offline"
-# Cache-aware streaming, chunk = (1 + R) * 80 ms = 1.12 s. Never the one-shot
-# offline recognize: full attention over a 120 s island peaked at 2.9 GB RSS.
-ASR_RIGHT_CONTEXT = 13
 ISLAND_MAX_S = 120.0
 TRACKS = ("desktop", "mic")
 SR = ns.SAMPLE_RATE
 DIAR_BLOCK = 2 * SR  # 2.0 s
-ASR_BLOCK = int(2.24 * SR)  # two 1.12 s chunks
 ENV_HOP = int(merge.FRAME_S * SR)
 MIN_FREE_BYTES = 200 * 1024 * 1024
 
 STAGES = ("prepare", "diarize", "asr", "merge")
 PERF = os.path.join(state.STATE_DIR, "perf.json")
 # Measured on the laptop under load (lead's benchmark, 2026-09-25); perf.json refines them.
-PERF_DEFAULTS = {"rtf_diar": 0.26, "rtf_asr": 0.9, "load_diar_s": 2.0, "load_asr_s": 8.0}
+# gpu_*: an RTX 3060 host and a ~1 MB/s upload, measured 2026-09-28.
+PERF_DEFAULTS = {"rtf_diar": 0.26, "rtf_asr": 0.9, "load_diar_s": 2.0, "load_asr_s": 8.0,
+                 "gpu_rtf_diar": 0.004, "gpu_rtf_asr": 0.015, "gpu_load_diar_s": 3.0,
+                 "gpu_load_asr_s": 1.0, "gpu_up_s_per_mb": 1.0}
 ETA_MIN_MEASURED_S = 20.0
 
 
@@ -90,19 +98,37 @@ FFMPEG_SIGNAL_EXIT = 255  # ffmpeg's exit code after a trapped termination signa
 
 
 class TrackReader:
-    """Sequential 16 kHz mono float32 decode of one track through an ffmpeg pipe."""
+    """Sequential 16 kHz mono float32 decode of one track through an ffmpeg pipe.
+    `data` (the file's bytes) is fed on ffmpeg's stdin instead of opening `path`:
+    the offload host never writes the audio to its disk."""
 
-    def __init__(self, path):
-        self.path = path
+    def __init__(self, path=None, data=None):
+        self.path = path if data is None else "<memory>"
         self.pos = 0  # samples delivered so far
         # stderr goes to a file, not a pipe: a chatty decoder must never block on
         # a full stderr pipe while we only drain stdout.
         self.err = tempfile.TemporaryFile()
         self.proc = subprocess.Popen(
-            ["ffmpeg", "-nostdin", "-v", "error", "-i", str(path),
+            ["ffmpeg", "-nostdin", "-v", "error", "-i", "pipe:0" if data is not None else str(path),
              "-ac", "1", "-ar", str(SR), "-f", "f32le", "-"],
-            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=self.err,
+            stdin=subprocess.DEVNULL if data is None else subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=self.err,
         )
+        self._feeder = None
+        if data is not None:
+            self._feeder = threading.Thread(target=self._feed, args=(data,), daemon=True)
+            self._feeder.start()
+
+    def _feed(self, data):
+        # A reader closed before the end of the track kills ffmpeg: that pipe error is expected.
+        try:
+            self.proc.stdin.write(data)
+        except OSError:
+            pass
+        try:
+            self.proc.stdin.close()
+        except OSError:
+            pass
 
     def read(self, n):
         """Up to n samples; a short (or empty) block means the track ended. The
@@ -149,6 +175,8 @@ class TrackReader:
         if self.proc.poll() is None:
             self.proc.kill()
         self.proc.wait()
+        if self._feeder:
+            self._feeder.join()
         self.proc.stdout.close()
         self.err.close()
 
@@ -184,6 +212,85 @@ def shift_envelope(env, offset_s):
     if k > 0:
         return np.concatenate([np.full(k, np.nan, dtype=env.dtype), env])
     return env[-k:] if k < 0 else env
+
+
+# ---- model loops (the laptop and the offload host run these same two) --------------
+
+
+def diarize_track(diar, rd, on_progress):
+    """One track through a diarizer: ([(s, e, speaker)] in track time, duration_s,
+    per-frame dB envelope). on_progress(labelled_s) after every block."""
+    env_parts = []
+    with diar.stream() as st:
+        while True:
+            block = rd.read(DIAR_BLOCK)
+            if block.size == 0:
+                break
+            env_parts.append(envelope_db(block))
+            st.push(block)
+            on_progress(st.labelled_seconds())
+            _check_cancel()
+        _check_cancel()  # never commit a checkpoint of a cancelled pass
+        st.finish()
+        segs = st.segments()
+    env = np.concatenate(env_parts) if env_parts else np.empty(0, dtype=np.float32)
+    return segs, rd.pos / SR, env
+
+
+def recognize_islands(rec, rd, off, islands, on_progress, on_island):
+    """ASR over the call-time islands of one track (track t0 = call `off`), one
+    offline pass per island. on_progress(seconds into the current island);
+    on_island(record, island_len) once an island is complete, the only point a
+    result may be committed."""
+    for s, e in islands:
+        _check_cancel()
+        start = max(0.0, s - off)
+        rd.skip_to(int(start * SR))
+        begin_s = rd.pos / SR + off
+        block = rd.read(int(max(0.0, e - off - rd.pos / SR) * SR))
+        words, langs = rec.recognize(block) if block.size else ([], [])
+        on_progress(block.size / SR)
+        _check_cancel()
+        on_island({
+            "key": _island_key((s, e)), "s": round(begin_s, 3), "e": round(e, 3),
+            "lang": langs, "words": [[w, round(a, 3), round(b, 3)] for w, a, b in words],
+        }, e - s)
+
+
+class LocalEngine:
+    """The laptop's CPU: the fallback, and the only engine with offloading off."""
+
+    where = "laptop"
+    perf = ""  # perf.json key prefix
+
+    def __init__(self, lib):
+        self.lib = lib
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        pass
+
+    def upload_mb(self, names, tracks):
+        return 0.0
+
+    def upload(self, names, tracks):
+        pass
+
+    def diarizer(self):
+        return ns.Diarizer(self.lib, MODEL_DIR / DIAR_MODEL["file"], DIAR_PRESET)
+
+    def recognizer(self):
+        return ns.Recognizer(self.lib, MODEL_DIR / ASR_MODEL["file"], None)
+
+    def diarize(self, diar, name, info, on_progress):
+        with TrackReader(info["path"]) as rd:
+            return diarize_track(diar, rd, on_progress)
+
+    def recognize(self, rec, name, info, islands, on_progress, on_island):
+        with TrackReader(info["path"]) as rd:
+            recognize_islands(rec, rd, info["offset"], islands, on_progress, on_island)
 
 
 # ---- checkpoints -------------------------------------------------------------------------
@@ -285,7 +392,7 @@ class Progress:
         self.lock = threading.Lock()
         self._write_lock = threading.Lock()
         self.costs = {s: 1.0 for s in STAGES}
-        self.stage, self.track = "prepare", None
+        self.stage, self.track, self.host = "prepare", None, "laptop"
         self.frac, self.base, self.scale = 0.0, 0.0, 1.0 / len(STAGES)
         self.stage_frac, self.audio_s, self.audio_total = 0.0, 0.0, 0.0
         self.stage_rtf_assumed = None
@@ -300,6 +407,11 @@ class Progress:
     def set_costs(self, **costs):
         with self.lock:
             self.costs.update(costs)
+
+    def set_host(self, host):
+        """Where the models run now: the popup shows it."""
+        with self.lock:
+            self.host, self.dirty = host, True
 
     def begin(self, stage, audio_total=0.0, rtf=None):
         with self.lock:
@@ -378,7 +490,7 @@ class Progress:
                 "frac": round(self.frac, 4), "stage_frac": round(self.stage_frac, 4),
                 "eta_s": None if eta is None else int(round(eta)),
                 "audio_s": round(self.audio_s, 1), "audio_total_s": round(self.audio_total, 1),
-                "track": self.track, "at": time.time(),
+                "track": self.track, "host": self.host, "at": time.time(),
             }
 
     def _run(self):
@@ -427,42 +539,31 @@ def _session_meta(session):
     return meta, tracks
 
 
-def _diarize(lib, ck, tracks, est, prog, perf):
+def _diarize(engine, ck, tracks, est, prog, perf):
+    p = engine.perf
     todo = [t for t in TRACKS if t in tracks and ck.load_json(f"diar_{t}.json") is None]
     total = sum(est[t] for t in tracks)
-    prog.begin("diarize", total, perf["rtf_diar"])
+    prog.begin("diarize", total, perf[p + "rtf_diar"])
     done_s = sum(est[t] for t in tracks if t not in todo)
-    if todo:
+    for name in todo:
+        _check_cancel()
+        # A fresh model per track: on CUDA, NeMo-Speech.cpp 97a15afa5c leaks state
+        # between streams of one model, and the next track goes silent after 21 s.
         t_load = time.monotonic()
-        with ns.Diarizer(lib, MODEL_DIR / DIAR_MODEL["file"], DIAR_PRESET) as diar:
-            save_perf(perf, "load_diar_s", time.monotonic() - t_load)
+        with engine.diarizer() as diar:
+            save_perf(perf, p + "load_diar_s", time.monotonic() - t_load)
             prog.mark(done_s)
-            for name in todo:
-                _check_cancel()
-                env_parts = []
-                with diar.stream() as st, TrackReader(tracks[name]["path"]) as rd:
-                    while True:
-                        block = rd.read(DIAR_BLOCK)
-                        if block.size == 0:
-                            break
-                        env_parts.append(envelope_db(block))
-                        st.push(block)
-                        prog.advance(done_s + st.labelled_seconds(), name)
-                        _check_cancel()
-                    _check_cancel()  # never commit a checkpoint of a cancelled pass
-                    st.finish()
-                    duration = rd.pos / SR
-                    off = tracks[name]["offset"]
-                    segs = [[round(s + off, 3), round(e + off, 3), k] for s, e, k in st.segments()]
-                env = np.concatenate(env_parts) if env_parts else np.empty(0, dtype=np.float32)
-                ck.save_array(f"env_{name}.npy", shift_envelope(env, off).astype(np.float16))
-                ck.save_json(f"diar_{name}.json", {"segments": segs, "duration_s": round(duration, 3),
-                                                   "offset_s": off})
-                done_s += est[name]
-                prog.advance(done_s, name)
+            segs, duration, env = engine.diarize(
+                diar, name, tracks[name], lambda s: prog.advance(done_s + s, name))
         prog.close_measure()
-        rtf = prog.measured_rtf()
-        save_perf(perf, "rtf_diar", rtf)
+        off = tracks[name]["offset"]
+        segs = [[round(s + off, 3), round(e + off, 3), k] for s, e, k in segs]
+        ck.save_array(f"env_{name}.npy", shift_envelope(env, off).astype(np.float16))
+        ck.save_json(f"diar_{name}.json", {"segments": segs, "duration_s": round(duration, 3),
+                                           "offset_s": off})
+        done_s += est[name]
+        prog.advance(done_s, name)
+        save_perf(perf, p + "rtf_diar", prog.measured_rtf())
     prog.end()
 
 
@@ -491,53 +592,93 @@ def _island_key(isl):
     return f"{isl[0]:.3f}-{isl[1]:.3f}"
 
 
-def _asr(lib, ck, tracks, plan, prog, perf):
+def _asr_todo(ck, tracks, plan):
     todo = {}
     for t in tracks:
         ck.repair_asr(t)
         done = {r["key"] for r in ck.asr_records(t)}
         todo[t] = [isl for isl in plan["islands"][t] if _island_key(isl) not in done]
+    return todo
+
+
+def _asr(engine, ck, tracks, plan, prog, perf):
+    p = engine.perf
+    todo = _asr_todo(ck, tracks, plan)
     total = sum(e - s for t in tracks for s, e in plan["islands"][t])
     remaining = sum(e - s for t in todo for s, e in todo[t])
-    prog.begin("asr", total, perf["rtf_asr"])
+    prog.begin("asr", total, perf[p + "rtf_asr"])
     done_s = total - remaining
     if remaining > 0:
         t_load = time.monotonic()
-        with ns.Recognizer(lib, MODEL_DIR / ASR_MODEL["file"], ASR_RIGHT_CONTEXT) as rec:
-            save_perf(perf, "load_asr_s", time.monotonic() - t_load)
+        with engine.recognizer() as rec:
+            save_perf(perf, p + "load_asr_s", time.monotonic() - t_load)
             prog.mark(done_s)
             for t in TRACKS:
                 if not todo.get(t):
                     continue
-                off = tracks[t]["offset"]
-                with TrackReader(tracks[t]["path"]) as rd:
-                    for s, e in todo[t]:
-                        _check_cancel()
-                        start = max(0.0, s - off)
-                        rd.skip_to(int(start * SR))
-                        begin_s = rd.pos / SR + off
-                        need = int(max(0.0, e - off - rd.pos / SR) * SR)
-                        with rec.stream(LANGUAGE) as st:
-                            while need > 0:
-                                block = rd.read(min(ASR_BLOCK, need))
-                                if block.size == 0:
-                                    break
-                                need -= block.size
-                                st.push(block)
-                                prog.advance(done_s + (rd.pos / SR + off - begin_s), t)
-                                _check_cancel()
-                            _check_cancel()
-                            words, langs = st.finish()
-                        _check_cancel()
-                        ck.append_asr(t, {
-                            "key": _island_key((s, e)), "s": round(begin_s, 3), "e": round(e, 3),
-                            "lang": langs, "words": [[w, round(a, 3), round(b, 3)] for w, a, b in words],
-                        })
-                        done_s += e - s
-                        prog.advance(done_s, t)
+
+                def island(record, length, t=t):
+                    nonlocal done_s
+                    ck.append_asr(t, record)
+                    done_s += length
+                    prog.advance(done_s, t)
+
+                engine.recognize(rec, t, tracks[t], todo[t],
+                                 lambda x, t=t: prog.advance(done_s + x, t), island)
         prog.close_measure()
-        save_perf(perf, "rtf_asr", prog.measured_rtf())
+        save_perf(perf, p + "rtf_asr", prog.measured_rtf())
     prog.end()
+
+
+def _pending(ck, meta, tracks):
+    """Tracks a model still has to read: all of them until every track is
+    diarized (the plan needs them all), then those with an island left."""
+    if any(ck.load_json(f"diar_{t}.json") is None for t in tracks):
+        return [t for t in TRACKS if t in tracks]
+    plan, _, _ = _plan(ck, meta, tracks)
+    todo = _asr_todo(ck, tracks, plan)
+    return [t for t in TRACKS if todo.get(t)]
+
+
+def _engines(lib, ck, meta, tracks):
+    """The GPU host while it is idle and takes the job (a lost link gets
+    offload.TRIES - 1 reconnects), then the laptop, which always finishes."""
+    for _ in range(offload.TRIES):
+        if not _pending(ck, meta, tracks):
+            break
+        remote = offload.connect()
+        if remote is None:
+            break
+        yield remote
+    yield LocalEngine(lib)
+
+
+def _model_stages(engine, ck, meta, tracks, est, prog, perf):
+    p = engine.perf
+    audio = sum(est.values())
+    asr_guess = 0.55 * est.get("desktop", 0.0) + 0.35 * est.get("mic", 0.0)
+    pending = _pending(ck, meta, tracks)
+    up_mb = engine.upload_mb(pending, tracks)
+    prog.set_host(engine.where)
+    prog.set_costs(prepare=3.0 + perf["gpu_up_s_per_mb"] * up_mb,
+                   diarize=len(tracks) * perf[p + "load_diar_s"] + perf[p + "rtf_diar"] * audio,
+                   asr=perf[p + "load_asr_s"] + perf[p + "rtf_asr"] * asr_guess,
+                   merge=2.0 + audio / 3600.0)
+    prog.begin("prepare")
+    t_up = time.monotonic()
+    engine.upload(pending, tracks)
+    if up_mb >= 1.0:  # smaller uploads measure the round trip, not the link
+        save_perf(perf, "gpu_up_s_per_mb", (time.monotonic() - t_up) / up_mb)
+    prog.end()
+
+    _diarize(engine, ck, tracks, est, prog, perf)
+    _check_cancel()
+    plan, segs, env = _plan(ck, meta, tracks)
+    asr_s = sum(e - s for t in tracks for s, e in plan["islands"][t])
+    prog.set_costs(asr=perf[p + "load_asr_s"] + perf[p + "rtf_asr"] * asr_s)
+    _asr(engine, ck, tracks, plan, prog, perf)
+    _check_cancel()
+    return plan, segs, env
 
 
 def _merge(session, ck, meta, tracks, plan, segs, env, engine, wall_s):
@@ -600,28 +741,24 @@ def run_pipeline(session, prog):
         done = ck.load_json(f"diar_{t}.json")
         est[t] = done["duration_s"] if done else (
             probe_duration(info["path"]) or float(meta.get("duration_s") or 0.0) or 60.0)
-    audio = sum(est.values())
-    asr_guess = 0.55 * est.get("desktop", 0.0) + 0.35 * est.get("mic", 0.0)
-    prog.set_costs(prepare=3.0,
-                   diarize=perf["load_diar_s"] + perf["rtf_diar"] * audio,
-                   asr=perf["load_asr_s"] + perf["rtf_asr"] * asr_guess,
-                   merge=2.0 + audio / 3600.0)
-    prog.begin("prepare")
-    prog.end()
 
-    _diarize(lib, ck, tracks, est, prog, perf)
-    _check_cancel()
-    plan, segs, env = _plan(ck, meta, tracks)
-    asr_s = sum(e - s for t in tracks for s, e in plan["islands"][t])
-    prog.set_costs(asr=perf["load_asr_s"] + perf["rtf_asr"] * asr_s)
-    _asr(lib, ck, tracks, plan, prog, perf)
-    _check_cancel()
+    hosts = []
+    for eng in _engines(lib, ck, meta, tracks):
+        if eng.where not in hosts:
+            hosts.append(eng.where)
+        try:
+            with eng:
+                plan, segs, env = _model_stages(eng, ck, meta, tracks, est, prog, perf)
+            break
+        except offload.Lost as exc:  # only a remote engine loses its link
+            print(f"worker: {eng.where} lost: {exc}; the next engine resumes", file=sys.stderr, flush=True)
 
     prog.begin("merge", 1.0)
     engine = {
         "nemo_speech": lib.version(),
-        "asr": dict(ASR_MODEL, right_context=ASR_RIGHT_CONTEXT, language=LANGUAGE),
+        "asr": dict(ASR_MODEL, mode="offline"),
         "diar": dict(DIAR_MODEL, preset=DIAR_PRESET),
+        "hosts": hosts,
     }
     doc, md, js = _merge(session, ck, meta, tracks, plan, segs, env, engine, time.monotonic() - t_start)
     prog.advance(1.0)

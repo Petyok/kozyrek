@@ -34,7 +34,16 @@ import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "rec"))
 import nemo_speech as ns  # noqa: E402
-from transcribe import ASR_MODEL, ASR_RIGHT_CONTEXT, MODEL_DIR  # noqa: E402
+from transcribe import MODEL_DIR  # noqa: E402
+
+# Dictation streams, so it keeps the cache-aware model; call transcripts use an
+# offline one (rec/transcribe.py ASR_MODEL).
+ASR_MODEL = {
+    "file": "nemotron-3.5-asr-streaming-0.6b.q8_0.gguf",
+    "revision": "1c8deaecc64b91f034d73e08dd8b64625eb3395d",
+    "sha256": "a5c435f294eea8f88ce68dd27b8c3bfea7f777cb2fbba04fcd30eaa555f429ae",
+}
+ASR_RIGHT_CONTEXT = 13  # chunk = (1 + R) * 80 ms = 1.12 s
 
 RATE = ns.SAMPLE_RATE
 BLOCK_S = 0.05

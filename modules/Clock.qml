@@ -1,7 +1,9 @@
 import QtQuick
+import QtQuick.Controls
 import Quickshell
 import Quickshell.Io
 import "../" as K
+import "../lib/parse.js" as Parse
 
 K.Pill {
     id: root
@@ -16,7 +18,7 @@ K.Pill {
 
     // ── time ──
     property var now: new Date()
-    Timer { interval: 1000; repeat: true; running: true; onTriggered: root.now = new Date() }
+    Timer { interval: 1000; repeat: true; running: true; onTriggered: { root.now = new Date(); root.check() } }
     function hhmm(d) { return ("0"+d.getHours()).slice(-2)+":"+("0"+d.getMinutes()).slice(-2) }
     function ddmm(d) { return ("0"+d.getDate()).slice(-2)+"."+("0"+(d.getMonth()+1)).slice(-2) }
     function isoHM(iso) { return root.hhmm(new Date(iso)) }
@@ -101,12 +103,53 @@ K.Pill {
     function shiftYear(delta) { viewYear += delta }
     function isToday(d) { return d === now.getDate() && viewMonth === now.getMonth() && viewYear === now.getFullYear() }
 
+    // ── timers & alarms ──
+    // Items {kind: "timer"|"alarm", at: epoch ms, label}, sorted by `at`, kept in state/timers.json so they
+    // survive a restart. One that came due while the bar was off rings on the first tick after it loads.
+    property var items: []
+    property bool badInput: false
+    FileView {
+        id: store
+        path: Quickshell.statePath("timers.json")
+        printErrors: false           // first run: no file yet
+        adapter: JsonAdapter { id: ad; property var items: [] }
+        onLoaded: root.items = JSON.parse(JSON.stringify(ad.items))
+    }
+    function save() { ad.items = root.items; store.writeAdapter() }
+    function addItem(text) {
+        var p = Parse.parseTimer(text, Date.now())
+        if (!p) return false
+        items = items.concat([p]).sort(function(a, b) { return a.at - b.at })
+        save(); return true
+    }
+    function removeItem(i) { items = items.filter(function(_, k) { return k !== i }); save() }
+    // alarm → "07:30", timer → time left
+    function itemWhen(it, now) {
+        return it.kind === "alarm" ? hhmm(new Date(it.at)) : Parse.fmtClock(Math.ceil((it.at - now.getTime()) / 1000))
+    }
+    function check() {
+        var t = now.getTime(), due = items.filter(function(it) { return it.at <= t })
+        if (!due.length) return
+        items = items.filter(function(it) { return it.at > t }); save()
+        due.forEach(function(it) { root.ring(it) })
+    }
+    // App name "kozyrek-alarm" lets Notifications.qml through do-not-disturb.
+    function ring(it) {
+        var alarm = it.kind === "alarm"
+        Quickshell.execDetached(["notify-send", "-a", "kozyrek-alarm", "-u", "critical", "-t", "60000",
+                                 alarm ? "⏰ Будильник " + hhmm(new Date(it.at)) : "⏳ Таймер", it.label])
+        Quickshell.execDetached(["sh", "-c", "for i in 1 2 3; do paplay /usr/share/sounds/freedesktop/stereo/alarm-clock-elapsed.oga; done"])
+    }
+
     // ── pill content ──
     Text { text: root.loaded ? root.wmo(root.curCode)[0] : "🕐"; font.pixelSize: 16; anchors.verticalCenter: parent.verticalCenter }
     Column {
         spacing: -1
         anchors.verticalCenter: parent.verticalCenter
-        Text { text: root.ddmm(root.now); color: K.Theme.dim; font.pixelSize: 10; anchors.horizontalCenter: parent.horizontalCenter }
+        Text {
+            text: root.items.length ? (root.items[0].kind === "alarm" ? "⏰ " : "⏳ ") + root.itemWhen(root.items[0], root.now) : root.ddmm(root.now)
+            color: root.items.length ? K.Theme.accent : K.Theme.dim; font.pixelSize: 10; anchors.horizontalCenter: parent.horizontalCenter
+        }
         Text { text: root.hhmm(root.now); color: K.Theme.text; font.pixelSize: K.Theme.fontPx; font.bold: true; anchors.horizontalCenter: parent.horizontalCenter }
     }
 
@@ -115,6 +158,7 @@ K.Pill {
         id: menu
         pill: root
         contentWidth: 320
+        wantsKeyboard: true      // the add field
         onOpenChanged: if (open) { root.viewYear = root.now.getFullYear(); root.viewMonth = root.now.getMonth() }
         readonly property int colW: contentWidth - 32
 
@@ -220,6 +264,46 @@ K.Pill {
                 }
                 Text { text: Math.round(modelData.tmax)+"° / "+Math.round(modelData.tmin)+"°"; color: K.Theme.text; font.pixelSize: 12
                        anchors { right: parent.right; verticalCenter: parent.verticalCenter } }
+            }
+        }
+
+        Rectangle { width: menu.colW; height: 1; color: K.Theme.faint }
+        Text { text: "Таймеры и будильники"; color: K.Theme.dim; font.pixelSize: 12 }
+        Repeater {
+            model: root.items
+            Item {
+                width: menu.colW; height: 24
+                Text { id: ti; text: modelData.kind === "alarm" ? "⏰" : "⏳"; font.pixelSize: 14; anchors.verticalCenter: parent.verticalCenter }
+                Text {
+                    text: root.itemWhen(modelData, root.now) + (modelData.label ? "  " + modelData.label : "")
+                    color: K.Theme.text; font.pixelSize: 13; elide: Text.ElideRight
+                    anchors { left: ti.right; leftMargin: 8; right: rm.left; verticalCenter: parent.verticalCenter }
+                }
+                Text {
+                    id: rm; text: "✕"; font.pixelSize: 13; anchors { right: parent.right; verticalCenter: parent.verticalCenter }
+                    color: rmMA.containsMouse ? K.Theme.bad : K.Theme.dim
+                    MouseArea { id: rmMA; anchors.fill: parent; anchors.margins: -6; hoverEnabled: true; onClicked: root.removeItem(index) }
+                }
+            }
+        }
+        Text { visible: root.items.length === 0; text: "Пока пусто"; color: K.Theme.dim; font.pixelSize: 12 }
+        Row {
+            spacing: 6
+            TextField {
+                id: addField
+                width: menu.colW - 3 * 34 - 3 * 6; height: 28; font.pixelSize: 12
+                color: K.Theme.text; placeholderTextColor: K.Theme.dim; placeholderText: "10m · 07:30 название"
+                background: Rectangle { radius: 8; color: "#1effffff"; border.color: root.badInput ? K.Theme.bad : K.Theme.faint }
+                onTextEdited: root.badInput = false
+                onAccepted: { if (root.addItem(text)) text = ""; else root.badInput = true }
+            }
+            Repeater {
+                model: ["5m", "10m", "30m"]
+                Rectangle {
+                    width: 34; height: 28; radius: 8; color: chipMA.containsMouse ? "#33ffffff" : "#1effffff"
+                    Text { anchors.centerIn: parent; text: modelData; color: K.Theme.text; font.pixelSize: 12 }
+                    MouseArea { id: chipMA; anchors.fill: parent; hoverEnabled: true; onClicked: root.addItem(modelData) }
+                }
             }
         }
     }

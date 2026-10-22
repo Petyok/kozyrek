@@ -1,9 +1,11 @@
 # Call recorder (`modules/Rec.qml` + `rec/`)
 
 One pill records a Meet / Zoom / Telegram call; a second click stops it and
-asks **"Turn recorded audio to text?"**. Yes runs a local transcription with a
-progress bar in the pill; No deletes the recording. Everything stays on the
-laptop.
+asks **"Turn recorded audio to text?"**. Yes runs the transcription with a
+progress bar in the pill; No deletes the recording. The recording and the
+transcript stay on the laptop. If a GPU host is set up and its GPU is idle,
+the models run there, on a copy that only ever exists in its RAM
+([Offload to a GPU host](#offload-to-a-gpu-host)); otherwise on the laptop.
 
 ```
 ~/Calls/2026-09-25_14-03-12/
@@ -25,14 +27,17 @@ on `start`, `transcribe`, `dismiss` and `discard`, so there is no timer.
 | idle | mic glyph, dim | start recording |
 | recording | blinking red dot + timer, red border (amber on a warning) | stop → ask |
 | ask | `?` badge; the popup opens under the pill | reopen the popup |
-| transcribing | progress fill + percent | popup: stage, elapsed, time left, Cancel |
-| done | ready badge + "Transcript ready" notification | open the transcript |
+| transcribing | progress fill + percent | popup: stage, where it runs (gpu / laptop), elapsed, time left, Cancel |
+| done | ready badge + "Transcript ready" notification | open the transcript (Open in the notification does the same: the pill goes idle) |
 | error | red | popup: Retry / Delete recording |
 
 Enter = Yes in the ask popup. Esc or a click elsewhere only closes it: No
 deletes the recording, so it is never a reflex key. Cancel during
 transcription goes back to the question (audio and checkpoints kept, Yes
 resumes where it stopped). Hotkey: `qs -c kozyrek ipc call rec toggle`.
+`qs -c kozyrek ipc call rec refresh` makes the pill re-read the state; the
+notification's Open calls it after `kozyrec.py dismiss <session>`, which
+leaves a newer call alone if the notification is clicked late.
 
 Idle cost is zero: no process, no timer. The only child the bar keeps is
 `kozyrec.py status --follow`, and only while something is live; it exits by
@@ -68,30 +73,77 @@ sound, music and notifications included.
 ## Transcription
 
 `kozyrec.py transcribe <dir>` forks a detached worker (`nice 19`, `ionice
--c3`) that drives NeMo-Speech.cpp in-process through its C ABI
-(`rec/nemo_speech.py`, ctypes). The CLI prints no progress for a single file;
-the C ABI gives exact progress (audio pushed and computed) and cancellation
-between blocks.
+-c3`) that drives NeMo-Speech.cpp through its C ABI (`rec/nemo_speech.py`,
+ctypes): in-process on the laptop, or on a GPU host when it is idle. The
+CLI prints no progress for a single file; the C ABI gives exact progress
+(audio pushed and computed) and cancellation between diarization blocks and
+ASR islands.
 
-1. **diarize** both tracks with Nemotron-3-Diarization (preset `v3-offline`).
+1. **diarize** both tracks with Nemotron-3-Diarization (preset `v3-offline`),
+   loading the model afresh per track: on CUDA, NeMo-Speech.cpp 97a15afa5c leaks
+   state between streams of one model, and the second track went silent after
+   its first 21 s chunk.
    Desktop channels become Speaker 1..N. A mic channel that is active ≥ 85 %
    inside desktop speech and not clearly louder than the echo level is echo;
    the rest is **Me**.
-2. **asr** with Nemotron 3.5 ASR 0.6B (cache-aware streaming, right context
-   13 = 1.12 s chunks, language `auto` per utterance for mixed ru/en) over
-   speech islands only: all desktop speech and the Me parts of the mic.
+2. **asr** with Orukeet (`oruk/orukeet`, a September 2026 fine-tune of
+   Parakeet TDT 0.6B v3; 25 languages with ru/en detected on its own), one
+   offline full-attention pass per speech island (≤ 120 s): all desktop speech
+   and the Me parts of the mic. It replaced Nemotron 3.5 ASR streaming, which
+   garbled Russian calls (A/B on a 26 min call, 2026-10-06); dictation keeps
+   Nemotron because it has to stream.
 3. **merge** (`rec/merge.py`): mic words that repeat desktop words within
    ±1.5 s, or sit at the echo level, are dropped (kept in `transcript.json`
    under `dropped`), then words are grouped into turns and ordered by time.
 
 Every stage checkpoints into `<session>/.transcribe/`, so Retry and a
 cancelled run resume. Diarization and ASR are never loaded at the same time:
-peak ≈ 1 GB RSS. The full-attention offline recognizer is deliberately not
-used: on a 120 s island it took ~2.9 GB and pushed the laptop into swap.
+peak ≈ 1.6 GB RSS, a 120 s island through the offline recognizer.
 
 Measured on the i5-5350U (turbo off, other load present): diarization RTF
 ≈ 0.26 per track, ASR RTF ≈ 0.9 on speech. A 1 h call therefore takes
-roughly an hour to transcribe; the ETA in the popup is measured, not guessed.
+roughly an hour to transcribe on the laptop; the ETA in the popup is
+measured, not guessed. On an RTX 3060 host a 2:06 call took 16 s and a
+21 min call 29 s, connection and busy check included.
+
+## Offload to a GPU host
+
+Offloading is off until `~/.config/kozyrek/gpu-host` exists. It holds one
+line: the command that runs a shell command on the host, e.g. `ssh gpu-box`
+(kozyrec appends the remote command as one more argument). Before the model
+stages the worker asks the host whether its GPU is free, over one such
+connection that then carries the whole job (`rec/offload.py`). Busy means: any
+of five `nvidia-smi` samples 0.2 s apart at ≥ 20 % utilisation, less than
+2500 MiB of free VRAM (an idle model that holds the card counts), or a running
+or queued ComfyUI job. Busy, no answer within 25 s (link down), or not set up:
+the laptop transcribes as before, and `.transcribe/worker.log` says why.
+
+The host runs the laptop's own loops (`diarize_track`, `recognize_islands`),
+shipped as source with every job, on a CUDA build of the same NeMo-Speech.cpp
+commit with the same models. Results come back per track (diarization) and
+per island (ASR) and are checkpointed on the laptop as they arrive, so a lost
+link costs at most the island in flight: the worker reconnects once, then
+finishes on the laptop from the checkpoints.
+
+What the GPU host holds, and for how long:
+
+- The Opus tracks and the results, in the RAM of one process, for the length
+  of the job. Nothing is written to its disks: the audio reaches ffmpeg
+  through a pipe, results leave over the SSH channel, kozyrek's code is
+  imported from memory. Its stderr (NeMo's model lines, tracebacks) goes to
+  the laptop's `worker.log`; sshd logs the login as for any SSH session.
+- The process locks its memory (`mlockall`), so none of it goes to swap, and
+  cannot dump core (`RLIMIT_CORE` 0, not dumpable).
+- It exits when the job is done, when the laptop closes the channel (Cancel),
+  and 60 s after the last byte from the laptop, which pings every 10 s: a
+  laptop that sleeps or loses the link leaves nothing on the host for more
+  than a minute.
+- In transit it is SSH. There is no second layer of encryption: nothing is
+  at rest there to protect, and the host has to hear the audio to transcribe
+  it.
+
+Not covered: root on the GPU host can read the process's memory while the job
+runs, and ffmpeg's decode buffers (a separate process) are not locked.
 
 ## Setup (already done on the target laptop)
 
@@ -115,11 +167,38 @@ runtime library: `KOZYREC_NEMO_LIB`):
 
 | file | from | size | sha256 |
 |---|---|---|---|
-| `nemotron-3.5-asr-streaming-0.6b.q8_0.gguf` | `nvidia/nemotron-3.5-asr-streaming-0.6b` @ `1c8deae` | 741 548 352 B | `a5c435f294eea8f88ce68dd27b8c3bfea7f777cb2fbba04fcd30eaa555f429ae` |
+| `orukeet-v0.1.0.q8_0.gguf` (calls) | `oruk/orukeet` @ `b59c13a`, converted (below) | 714 456 704 B | `f3b5569dc4a86deee279fa484bb6985572088beba4b78775218d658918e0b297` |
 | `Nemotron-3-Diarization.q8_0.gguf` | `nvidia/Nemotron-3-Diarization` @ `f667ed7` | 107 012 128 B | `08456d9e22cd9a323c0364d98375f3746d6e68507ebb705cd46438c534c7a3a1` |
+| `nemotron-3.5-asr-streaming-0.6b.q8_0.gguf` (dictation) | `nvidia/nemotron-3.5-asr-streaming-0.6b` @ `1c8deae` | 741 548 352 B | `a5c435f294eea8f88ce68dd27b8c3bfea7f777cb2fbba04fcd30eaa555f429ae` |
+
+No NeMo-Speech.cpp GGUF of Orukeet is published. Convert it in the source
+checkout (`pip install -r requirements.txt` in a venv first) under its final
+file name, which the GGUF stores as `general.name`, or the sha256 differs:
+
+```
+python convert_model.py oruk/orukeet --revision b59c13a733fce5cf193230d0fa317ee7f145a108 \
+    --outtype q8_0 --outfile ~/.local/share/kozyrec/models/orukeet-v0.1.0.q8_0.gguf
+```
+
+or copy it from a GPU host's `/opt/kozyrec/models/orukeet-v0.1.0.q8_0.gguf`.
 
 Also needed: `gst-launch-1.0` with gst-plugins-base and gst-plugin-pipewire,
 `ffmpeg`, `python3` with numpy, PipeWire's `libspa-aec-webrtc`.
 
 Tests: `cd rec && python3 test_capture.py && python3 -m unittest`, then
 `node --test test_parse.mjs` and `./test_kozyrek.sh` from the repo root.
+
+### GPU host
+
+Once, from the laptop (idempotent; the build takes ~4 min), then name the
+host for kozyrec:
+
+```
+ssh gpu-box bash -s < rec/gpu-setup.sh
+mkdir -p ~/.config/kozyrek && echo "ssh gpu-box" > ~/.config/kozyrek/gpu-host
+```
+
+It installs under `/opt/kozyrec`: a venv with numpy, NeMo-Speech.cpp
+`cuda-asr` at the laptop's commit, the diarizer from Hugging Face and Orukeet
+converted from its `.nemo` (in `/opt/kozyrec/conv-venv`), both at the laptop's
+revisions and sha256-checked. Nothing there ever holds call audio.

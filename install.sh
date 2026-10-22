@@ -31,6 +31,7 @@ Add to ~/.config/hypr/hyprland.conf (and remove your old bar / swayosd / mako):
   bind  = SUPER, COMMA,                exec, qs -c kozyrek ipc call dnd toggle
   bind  = SUPER ALT, code:27,          exec, qs -c kozyrek ipc call rec toggle
   bindr = SUPER, SUPER_R,              exec, qs -c kozyrek ipc call dict toggle
+  bind  = SUPER, F10,                  exec, qs -c kozyrek ipc call tv toggle
   layerrule = blur on, ignore_alpha 0.3, no_anim on, match:namespace ^kozyrek-dict\$
   binde = , XF86AudioRaiseVolume,      exec, qs -c kozyrek ipc call osd volume +5
   binde = , XF86AudioLowerVolume,      exec, qs -c kozyrek ipc call osd volume -5

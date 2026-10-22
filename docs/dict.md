@@ -38,8 +38,9 @@ dictation lasts seconds, and a bar reload that kills it loses one phrase.
 
 - **capture**: `pw-record` from the default source in 50 ms blocks. It sends
   the level for the waveform and handles the 10 s auto-stop.
-- **recognizer**: Nemotron 3.5 ASR 0.6B, the call recorder's model, through
-  `rec/nemo_speech.py` with interim results, language `auto`, 1.12 s chunks.
+- **recognizer**: Nemotron 3.5 ASR 0.6B (cache-aware streaming; call
+  transcripts use the offline Orukeet instead) through `rec/nemo_speech.py`
+  with interim results, language `auto`, 1.12 s chunks.
   The mic starts before the model loads, so nothing said meanwhile is lost.
 - **Typist**: pastes the difference between the transcript and what is
   already on screen. It always types the newest transcript and skips the ones

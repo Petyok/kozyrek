@@ -1,0 +1,21 @@
+#!/usr/bin/env python3
+"""tvctl CMD [ARGS]: talk to tvd (started by kozyrek). `tvctl volup`, `tvctl key down down ok`,
+`tvctl text hello`, `tvctl mirror on|window|off`, `tvctl view on|off`, `tvctl yt https://youtu.be/ID`, `tvctl apps`, `tvctl launch com.google.android.youtube.tv`, `tvctl status`. A bare key name is shorthand for `key NAME`."""
+import os, socket, sys
+
+SOCK = os.environ.get('KOZYREK_TV_SOCK') or os.path.join(os.environ.get('XDG_RUNTIME_DIR', '/tmp'), 'kozyrek-tv.sock')
+CMDS = {'key', 'text', 'apps', 'launch', 'yt', 'connect', 'ping', 'status', 'disconnect', 'mirror', 'view'}
+
+def main(argv):
+    if not argv: sys.exit(__doc__)
+    line = ' '.join(argv) if argv[0] in CMDS else 'key ' + ' '.join(argv)
+    s = socket.socket(socket.AF_UNIX)
+    try: s.connect(SOCK)
+    except OSError: sys.exit('tvd is not running (is kozyrek up? `qs -c kozyrek`)')
+    s.sendall(line.encode() + b'\n')
+    reply = s.makefile().readline().rstrip('\n')
+    print(reply)
+    sys.exit(reply.startswith(('err', 'yt err')))
+
+if __name__ == '__main__':
+    main(sys.argv[1:])

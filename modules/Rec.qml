@@ -28,6 +28,7 @@ K.Pill {
 
     onClicked: button => act(Parse.recClick(st, button === Qt.RightButton ? "right" : button === Qt.MiddleButton ? "middle" : "left"))
     function toggle() { act(Parse.recToggle(st)) }        // IPC `rec toggle`
+    function refresh() { attach() }                       // IPC `rec refresh`: the state changed behind the bar's back
 
     // ── pill content ────────────────────────────────────────
     Text {
@@ -134,7 +135,7 @@ K.Pill {
         if (to === "ask" && from === "recording" && m.stopReason && m.stopReason !== "user")
             notify(m.stopReason === "recorder_died" || m.stopReason === "low_disk", "Recording stopped", Parse.recStopText(m.stopReason))
         else if (from === "transcribing" && to === "done" && !K.Kozy.devMode)
-            Quickshell.execDetached(Parse.recDoneArgv(m.session, m.transcript, Parse.recDoneBody(m)))
+            Quickshell.execDetached(Parse.recDoneArgv(m.session, m.transcript, Parse.recDoneBody(m), root.script))
         else if (from === "transcribing" && to === "error")
             notify(true, "Transcription failed", m.msg)
     }
@@ -228,6 +229,8 @@ K.Pill {
                 columns: 2; columnSpacing: 12; rowSpacing: 2
                 Text { text: "stage";   color: K.Theme.dim; font.pixelSize: 12 }
                 Text { text: Parse.recStageLabel(root.m.stage); color: K.Theme.text; font.pixelSize: 12 }
+                Text { text: "on";      color: K.Theme.dim; font.pixelSize: 12 }
+                Text { text: root.m.host || "—"; color: K.Theme.text; font.pixelSize: 12 }
                 Text { text: "elapsed"; color: K.Theme.dim; font.pixelSize: 12 }
                 Text { text: Parse.fmtClock(root.now - root.m.since); color: K.Theme.text; font.pixelSize: 12 }
                 Text { text: "left";    color: K.Theme.dim; font.pixelSize: 12 }
@@ -251,7 +254,7 @@ K.Pill {
                     Text { text: modelData; color: index % 2 ? (modelData.startsWith("⚠") ? K.Theme.warn : K.Theme.text) : K.Theme.dim; font.pixelSize: 12 }
                 }
             }
-            Text { text: "Local only: nothing leaves this laptop."; color: K.Theme.dim; font.pixelSize: 11 }
+            Text { text: "The recording stays on this laptop."; color: K.Theme.dim; font.pixelSize: 11 }
             Choice { glyph: "\u{F04DB}"; glyphColor: K.Theme.bad; label: "Stop"; onPicked: root.act("stop") }
             Choice { glyph: "\u{F0770}"; label: "Open folder"; onPicked: { menu.open = false; root.act("folder") } }
         }

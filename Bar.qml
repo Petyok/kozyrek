@@ -24,9 +24,14 @@ PanelWindow {
         anchors { left: parent.left; leftMargin: Theme.pad; top: parent.top; topMargin: Theme.pad }
         spacing: 6
     }
+    // Centred while it fits; when a side zone grows into the middle (a connected
+    // Bluetooth device's name widens the right one) it slides aside instead of
+    // under that zone's pills.
     Row {
         id: centerRow
-        anchors { horizontalCenter: parent.horizontalCenter; top: parent.top; topMargin: Theme.pad }
+        x: Math.max(leftRow.x + leftRow.width + spacing,
+                    Math.min(rightRow.x - spacing - width, (parent.width - width) / 2))
+        anchors { top: parent.top; topMargin: Theme.pad }
         spacing: 6
     }
     Row {

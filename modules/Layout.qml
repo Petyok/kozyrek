@@ -10,7 +10,7 @@ K.Pill {
     id: root
     property string layout: ""
     function short(name) { return name.trim().split(" ")[0].slice(0, 2).toUpperCase() }
-    visible: layout.length > 0
+    visible: layout.length > 0 && layout !== "EN"   // only when it isn't the default
 
     Process {
         command: ["hyprctl", "-j", "devices"]

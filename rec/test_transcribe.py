@@ -1,5 +1,6 @@
-"""Worker bookkeeping: progress bar, resumable island logs, decoder end-of-track."""
+"""Worker bookkeeping: progress bar, resumable island logs, decoder end-of-track, engine handover."""
 
+import contextlib
 import os
 import signal
 import subprocess
@@ -7,11 +8,13 @@ import tempfile
 import threading
 import time
 import unittest
+from pathlib import Path
 from unittest import mock
 
 _tmp = tempfile.TemporaryDirectory()
 os.environ["KOZYREC_STATE_DIR"] = _tmp.name  # before importing state
 
+import offload  # noqa: E402
 import state  # noqa: E402
 import transcribe  # noqa: E402
 
@@ -96,6 +99,49 @@ class IslandLog(unittest.TestCase):
             self.assertEqual([r["key"] for r in ck.asr_records("mic")], ["a", "c"])
 
 
+class FakeEngine:
+    """Commits islands like a real engine; `fail_after` islands in, the link breaks."""
+
+    where, perf = "fake", ""
+
+    def __init__(self, fail_after=None):
+        self.fail_after, self.asked, self.done = fail_after, [], 0
+
+    def recognizer(self):
+        return contextlib.nullcontext()
+
+    def recognize(self, rec, name, info, islands, on_progress, on_island):
+        self.asked.append((name, [tuple(i) for i in islands]))
+        for s, e in islands:
+            if self.done == self.fail_after:
+                raise offload.Lost("link closed")
+            on_progress((e - s) / 2)
+            on_island({"key": transcribe._island_key((s, e)), "s": s, "e": e, "lang": [],
+                       "words": [[name, s, e]]}, e - s)
+            self.done += 1
+
+
+class EngineHandover(unittest.TestCase):
+    def test_a_lost_host_hands_over_at_the_island_it_stopped_at(self):
+        islands = {"desktop": [[0.0, 5.0], [6.0, 9.0]], "mic": [[1.0, 2.0], [3.0, 4.0]]}
+        with tempfile.TemporaryDirectory() as session:
+            ck = transcribe.Checkpoints(session)
+            tracks = {t: {"path": Path(session) / f"{t}.opus", "offset": 0.0} for t in islands}
+            plan, perf = {"islands": islands}, transcribe.load_perf()
+            prog = transcribe.Progress(session)
+            try:
+                remote, local = FakeEngine(fail_after=1), FakeEngine()
+                with self.assertRaises(offload.Lost):
+                    transcribe._asr(remote, ck, tracks, plan, prog, perf)
+                transcribe._asr(local, ck, tracks, plan, prog, perf)
+            finally:
+                prog.stop()
+            self.assertEqual(local.asked, [("desktop", [(6.0, 9.0)]), ("mic", [(1.0, 2.0), (3.0, 4.0)])])
+            for t in islands:
+                self.assertEqual([r["key"] for r in ck.asr_records(t)],
+                                 [transcribe._island_key(i) for i in islands[t]])
+
+
 class DecoderEnd(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -134,6 +180,20 @@ class DecoderEnd(unittest.TestCase):
         with transcribe.TrackReader(self.bad) as rd, self.assertRaises(transcribe.Failure) as cm:
             self.drain(rd)
         self.assertEqual((cm.exception.msg, cm.exception.retry), ("audio unreadable", False))
+
+    def test_a_track_in_memory_decodes_whole_and_closes_early_without_hanging(self):
+        data = Path(self.wav).read_bytes()
+        with transcribe.TrackReader(data=data) as rd:
+            self.drain(rd)
+            self.assertEqual(rd.pos, 30 * 16000)
+        closed = threading.Event()
+
+        def early():
+            with transcribe.TrackReader(data=data) as rd:  # ffmpeg is killed mid-feed
+                rd.read(transcribe.DIAR_BLOCK)
+            closed.set()
+        threading.Thread(target=early, daemon=True).start()
+        self.assertTrue(closed.wait(10), "closing a half-read in-memory track hung")
 
 
 if __name__ == "__main__":

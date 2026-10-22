@@ -17,7 +17,7 @@ Scope {
         imageSupported: true
         bodyMarkupSupported: true
         onNotification: n => {
-            if (Kozy.dnd) { n.dismiss(); return }
+            if (Kozy.dnd && n.appName !== "kozyrek-alarm") { n.dismiss(); return }   // alarms ring through DND
             n.tracked = true      // otherwise the object is gone right after this signal
         }
     }
@@ -45,7 +45,7 @@ Scope {
     }
 
     PanelWindow {
-        visible: root.shown.length > 0 && !Kozy.fsActive
+        visible: root.shown.length > 0   // Overlay layer: over fullscreen windows too (games)
         anchors { top: true; right: true }
         margins { top: Theme.barH + 4; right: Theme.pad }
         implicitWidth: 380
@@ -74,12 +74,14 @@ Scope {
                     border.width: 1
                     border.color: n.urgency === NotificationUrgency.Critical ? Theme.bad : Theme.faint
 
-                    // Paused while hovered; critical never times out on its own.
-                    // Runs only while the window is visible, so queued or
-                    // fullscreen-hidden cards keep their full timeout.
+                    // Paused while hovered. Critical stays longer but still goes away.
+                    // Only shown cards have a delegate, so queued ones keep their full timeout.
+                    // expireTimeout is the raw D-Bus value in ms (Quickshell 0.3.1 passes it
+                    // through; its docs say seconds); <= 0 is "server default" / "never".
                     Timer {
-                        interval: card.n.expireTimeout > 0 ? card.n.expireTimeout : 6000
-                        running: card.n.urgency !== NotificationUrgency.Critical && !hover.containsMouse && card.Window.window?.visible === true
+                        interval: card.n.expireTimeout > 0 ? card.n.expireTimeout
+                                : card.n.urgency === NotificationUrgency.Critical ? 15000 : 6000
+                        running: !hover.containsMouse
                         onTriggered: card.n.expire()
                     }
 

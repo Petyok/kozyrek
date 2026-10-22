@@ -5,7 +5,8 @@
     kozyrec stop [--reason R]  stop recording → state ask (idempotent)
     kozyrec status [--follow]  print the state; --follow streams changes and
                                exits right after a stable state (idle/ask/done/error)
-    kozyrec dismiss            ask/done/error → idle, files kept
+    kozyrec dismiss [<dir>]    ask/done/error → idle, files kept; with <dir>, only
+                               if the record is still that session's
     kozyrec discard            ask/done/error → idle, the whole session deleted
     kozyrec transcribe <dir>   start/resume transcription (detached worker)
     kozyrec cancel             stop transcription → back to ask
@@ -16,7 +17,8 @@ and kill-safe: the long-lived work runs in transient systemd --user units
 atomic compare-and-set on ~/.local/state/kozyrec/state.json. A verb killed
 half-way loses only its own output; `status` repairs whatever it left behind.
 
-Everything stays on this laptop: PipeWire → Ogg files in ~/Calls → local models.
+Recording stays on this laptop (PipeWire → Ogg files in ~/Calls); the models
+run on a GPU host while its GPU is idle, if one is set up, else here (see docs/rec.md).
 """
 import os, signal, sys, time
 
@@ -313,9 +315,12 @@ def follow():
                    0.5 if rec["state"] == "transcribing" else 1.0)
 
 
-def cmd_dismiss():
+def cmd_dismiss(argv):
+    # A session dir comes from a transcript notification, which can be clicked
+    # long after: it must never dismiss a newer call's question or result.
     rec = state.read()
-    if rec["state"] in ("ask", "done", "error"):
+    only = os.path.abspath(os.path.expanduser(argv[0])) if argv else None
+    if rec["state"] in ("ask", "done", "error") and only in (None, rec.get("session")):
         rec = state.set("idle", expect=rec["state"], session=rec.get("session")) or state.read()
         prune.prune(active=rec.get("session"))
     state.emit(with_live(rec))
@@ -369,7 +374,7 @@ def main(argv):
     if verb == "status":
         return cmd_status(rest)
     if verb == "dismiss":
-        return cmd_dismiss()
+        return cmd_dismiss(rest)
     if verb == "discard":
         return cmd_discard()
     if verb == "_finalize":

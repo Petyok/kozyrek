@@ -216,6 +216,23 @@ def _discard_checks():
     assert os.path.isdir(outside) and state.read()["state"] == "idle"
 
 
+def test_dismiss_from_an_old_notification_leaves_a_newer_call_alone():
+    with contextlib.redirect_stdout(io.StringIO()), fake_systemd():
+        _dismiss_checks()
+
+
+def _dismiss_checks():
+    old, new = _session("2026-09-25_04-00-00", ["transcript.md"]), _session("2026-09-25_04-30-00", ["mic.opus"])
+    _reset()
+    state.set("ask", new)
+    assert kozyrec.cmd_dismiss([old]) == 0 and state.read()["state"] == "ask"   # the newer question stays
+    state.set("done", old, transcript=os.path.join(old, "transcript.md"))
+    assert kozyrec.cmd_dismiss([old]) == 0 and state.read()["state"] == "idle"
+    assert os.path.exists(os.path.join(old, "transcript.md"))                    # dismiss keeps files
+    state.set("error", new, msg="x")
+    assert kozyrec.cmd_dismiss([]) == 0 and state.read()["state"] == "idle"     # the pill's own dismiss
+
+
 def test_unanswered_systemctl_never_ends_a_live_recording():
     s = _session("2026-09-25_07-00-00", ["mic.opus", "desktop.opus"])
     _reset()

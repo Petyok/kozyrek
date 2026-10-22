@@ -9,6 +9,7 @@ K.Pill {
     id: root
     active: menu.open
     onClicked: menu.open = !menu.open
+    property var ping: null     // the Ping pill: its latency line and graph live here while it is hidden
 
     readonly property var wifi:  Networking.devices.values.find(d => d.type === DeviceType.Wifi)  ?? null
     readonly property var wired: Networking.devices.values.find(d => d.type === DeviceType.Wired) ?? null
@@ -102,6 +103,12 @@ K.Pill {
         Text { visible: root.error !== ""; text: root.error; color: K.Theme.bad; font.pixelSize: 12 }
 
         Rectangle { width: menu.colW; height: 1; color: K.Theme.faint }
+        Text {
+            visible: root.ping !== null
+            text: "Ping " + (root.ping ? (root.ping.offline ? "offline" : root.ping.lost ? "lost" : Math.round(root.ping.ms) + " ms") : "") + "  ·  graph ›"
+            color: K.Theme.dim; font.pixelSize: 12
+            MouseArea { anchors.fill: parent; onClicked: { menu.open = false; root.ping.openGraph() } }
+        }
         Text {
             text: "Advanced…"; color: K.Theme.dim; font.pixelSize: 12
             MouseArea { anchors.fill: parent; onClicked: { menu.open = false; Quickshell.execDetached(["nm-connection-editor"]) } }
