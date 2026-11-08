@@ -14,6 +14,7 @@ K.Pill {
     readonly property bool unread: list.some(s => s.unread)
 
     active: pop.open
+    loud: working || asking || unread
     edge: asking ? K.Theme.warn : K.Theme.faint
     onClicked: svc.toggle()
 

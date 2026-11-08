@@ -8,12 +8,18 @@ QtObject {
     id: root
     readonly property bool devMode: Quickshell.env("KOZYREK_DEV") === "1"
 
-    // Fullscreen on the focused workspace. Read from the workspace object, not
-    // from the `fullscreen 0/1` event: that event desyncs when you leave
-    // fullscreen by switching workspace or closing the window. The workspace
-    // list is refreshed (socket request, no fork) on every event that can
-    // change it.
-    readonly property bool fsActive: Hyprland.focusedWorkspace?.hasFullscreen ?? false
+    // Real fullscreen on the focused workspace. The workspace's `hasfullscreen`
+    // is also true for a maximized window (`fullscreen 1`), which would hide
+    // every popup over a maximized kitty, so the window's mode bit 2 decides.
+    // Read from the objects, not from the `fullscreen 0/1` event: that event
+    // desyncs when you leave fullscreen by switching workspace or closing the
+    // window. Workspaces and toplevels are refreshed (socket request, no fork)
+    // on every event that can change them.
+    readonly property bool fsActive: {
+        const ws = Hyprland.focusedWorkspace
+        if (!ws?.hasFullscreen) return false
+        return ws.toplevels.values.some(t => ((t.lastIpcObject?.fullscreen ?? 0) & 2) !== 0)
+    }
     property Connections _hypr: Connections {
         target: Hyprland
         function onRawEvent(event) {
@@ -22,6 +28,7 @@ QtObject {
             case "focusedmon": case "activewindow": case "activewindowv2":
             case "closewindow": case "openwindow": case "movewindowv2":
                 Hyprland.refreshWorkspaces()
+                Hyprland.refreshToplevels()
             }
         }
     }
@@ -32,6 +39,8 @@ QtObject {
     property var bar: null
     // At most one popup open at a time; Popup.qml registers itself here.
     property var activePopup: null
+    // The "show hidden icons" pill (modules/Overflow.qml), registered by itself.
+    property var overflow: null
 
     // Do-not-disturb survives process restarts (PersistentProperties only
     // survives reloads), so it lives in a tiny JSON under the state dir.

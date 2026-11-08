@@ -33,7 +33,8 @@ PopupWindow {
     onOpenChanged: {
         if (open) {
             anchor.window = Kozy.bar
-            anchor.item = pill
+            // A pill living in the overflow popup has no place on the bar: hang off the chevron.
+            anchor.item = Kozy.overflow?.holds(pill) ? Kozy.overflow : pill
             anchor.updateAnchor()
             if (Kozy.activePopup && Kozy.activePopup !== popup) Kozy.activePopup.open = false
             Kozy.activePopup = popup

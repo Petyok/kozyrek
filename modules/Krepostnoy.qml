@@ -33,6 +33,7 @@ K.Pill {
     readonly property int commits: last && last.commits ? last.commits.length : 0
 
     active: menu.open || vs === "done"
+    loud: vs !== "off" && vs !== "listening"
     progress: vs === "working" && status.deadline
         ? (now - sinceMs) / (Date.parse(status.deadline) - sinceMs) : -1
     edge: vs === "stuck" ? K.Theme.warn : K.Theme.faint

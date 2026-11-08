@@ -106,6 +106,24 @@ roughly an hour to transcribe on the laptop; the ETA in the popup is
 measured, not guessed. On an RTX 3060 host a 2:06 call took 16 s and a
 21 min call 29 s, connection and busy check included.
 
+## Phone calls (import)
+
+Android does not let an app record the other side of a call, but Samsung's
+Phone app does (Phone → ⋮ → Settings → Record calls, auto-record on). Its
+files have both sides mixed digitally, with no echo:
+
+```
+kozyrec import "Call recording Name_261026_101500.m4a"
+```
+
+This makes a normal session with the file as its only track (transcoded to
+`desktop.opus`) and moves the pill to "Turn recorded audio to text?", so
+transcription, offload and the 7-day audio TTL work as for a laptop call. With
+no mic track there is no **Me**: everyone is Speaker 1..N. The session is
+named after the call's start (file mtime minus duration), so the same file
+never imports twice. It works only while the pill is idle (done/error are
+dismissed first). Getting the file to the laptop (e.g. Syncthing) is up to you.
+
 ## Offload to a GPU host
 
 Offloading is off until `~/.config/kozyrek/gpu-host` exists. It holds one

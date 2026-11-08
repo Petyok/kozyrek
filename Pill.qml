@@ -6,6 +6,7 @@ Rectangle {
     property bool active: false
     readonly property bool hovered: ma.containsMouse
     property real progress: -1          // 0..1 draws a fill behind the content; < 0 = none
+    property bool loud: false           // has something to say: an overflow item steps out onto the bar
     property color edge: Theme.faint    // border colour while not active
     default property alias content: inner.data
     signal clicked(int button)

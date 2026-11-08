@@ -10,6 +10,8 @@
     kozyrec discard            ask/done/error → idle, the whole session deleted
     kozyrec transcribe <dir>   start/resume transcription (detached worker)
     kozyrec cancel             stop transcription → back to ask
+    kozyrec import <file>      a recording made elsewhere (a phone's call recorder)
+                               → a new session with it as the only track → ask
 
 Output: one JSON object per line on stdout (see state.py). Every verb is short
 and kill-safe: the long-lived work runs in transient systemd --user units
@@ -362,6 +364,58 @@ def cmd_finalize():
     return 0
 
 
+def cmd_import(src):
+    """A phone call recording: both sides already mixed by the dialer, no
+    echo, so it takes the desktop slot (Speaker 1..N, no Me) and the rest of
+    the pipeline runs unchanged. Idle only; the session is named after the
+    call's start, so the same file never imports twice."""
+    src = os.path.abspath(os.path.expanduser(src))
+    rec = reconcile(state.read())
+    if rec["state"] in ("done", "error"):
+        rec = state.set("idle", expect=rec["state"]) or state.read()
+    if rec["state"] != "idle":
+        state.emit(state.error_line(f"Can't import while {rec['state']}", during="import", retry=True))
+        return 1
+    rc, out = capture.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                           "-of", "csv=p=0", src], timeout=30)
+    try:
+        dur = float(out.strip()) if rc == 0 else 0.0
+    except ValueError:
+        dur = 0.0
+    if dur < 1.0:
+        state.emit(state.error_line(f"No audio in {src}", during="import", retry=False))
+        return 1
+    t0 = os.stat(src).st_mtime - dur   # the recorder writes the file when the call ends
+    session = os.path.join(state.CALLS, time.strftime(prune.NAME_FMT, time.localtime(t0)))
+    os.makedirs(state.CALLS, exist_ok=True)
+    try:
+        os.mkdir(session)
+    except FileExistsError:
+        state.emit(state.error_line(f"Already imported: {session}", during="import", retry=False))
+        return 1
+    rc, out = capture.run(["ffmpeg", "-nostdin", "-v", "error", "-i", src, "-vn", "-ac", "1", "-ar", "16000",
+                           "-c:a", "libopus", "-b:a", "32k", os.path.join(session, "desktop.opus")],
+                          timeout=600)
+    if rc != 0:
+        state.rmtree(session, ignore_errors=True)
+        state.emit(state.error_line(f"ffmpeg failed: {out.strip()[:200]}", during="import", retry=False))
+        return 1
+    state.write_json(os.path.join(session, "session.json"), {
+        "v": 1, "t0_unix": t0, "end_unix": t0 + dur, "duration_s": round(dur, 3), "aec": False,
+        "tracks": {"desktop": {"file": "desktop.opus", "start_offset_s": 0.0, "duration_s": round(dur, 3)}},
+        "gaps": [], "stop_reason": "user", "complete": True, "warn": None,
+        "source": os.path.basename(src),
+    })
+    new = state.set("ask", session, expect="idle", match_session=False, **state.ask_fields(session))
+    if new is None:                                   # lost a race with start
+        state.rmtree(session, ignore_errors=True)
+        state.emit(state.read())
+        return 1
+    capture.run(["qs", "-c", "kozyrek", "ipc", "call", "rec", "refresh"])
+    state.emit(new)
+    return 0
+
+
 def main(argv):
     if not argv:
         print(__doc__.strip(), file=sys.stderr)
@@ -379,6 +433,8 @@ def main(argv):
         return cmd_discard()
     if verb == "_finalize":
         return cmd_finalize()
+    if verb == "import" and len(rest) == 1:
+        return cmd_import(rest[0])
     if verb in ("transcribe", "_worker") and not rest:
         state.emit(state.error_line(f"usage: kozyrec {verb} <session-dir>", during="transcribe"))
         return 2

@@ -20,6 +20,7 @@ K.Pill {
     readonly property string callsDir: Quickshell.env("HOME") + "/Calls"
 
     active: menu.open
+    loud: st !== "idle"
     progress: st === "transcribing" ? Math.max(0, m.frac) : -1
     // A live warning (mic muted, no call audio…) turns the recording border amber
     // rather than adding a glyph: the right zone has little room next to the clock.

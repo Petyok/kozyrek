@@ -7,6 +7,9 @@ PanelWindow {
     property alias left:   leftRow.data
     property alias center: centerRow.data
     property alias right:  rightRow.data
+    // Width the left zone may take without pushing the centre under the right
+    // zone (two zone gaps of two spacings each); the window title shrinks into it.
+    readonly property real leftRoom: width - 2 * Theme.pad - centerRow.width - rightRow.width - 2 * 2 * 6
 
     // Dev mode: sit at the bottom and ignore exclusive zones so the live
     // HyprPanel keeps the top edge while this one is being built.

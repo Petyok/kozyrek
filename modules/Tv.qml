@@ -6,5 +6,6 @@ K.Pill {
     id: pill
     property bool on: false
     active: on
+    loud: on
     Text { text: "\u{F0502}"; color: pill.on ? "white" : K.Theme.dim; font.pixelSize: 16; font.family: K.Theme.iconFont; anchors.verticalCenter: parent.verticalCenter }
 }

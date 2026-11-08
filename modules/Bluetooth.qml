@@ -20,14 +20,6 @@ K.Pill {
         font.pixelSize: 16; font.family: K.Theme.iconFont
         anchors.verticalCenter: parent.verticalCenter
     }
-    // Name of the connected device in the bar, like HyprPanel's bluetooth label.
-    Text {
-        visible: root.connectedDev !== null
-        text: root.connectedDev?.name ?? ""
-        color: K.Theme.text; font.pixelSize: K.Theme.fontPx
-        elide: Text.ElideRight; width: Math.min(implicitWidth, 140)
-        anchors.verticalCenter: parent.verticalCenter
-    }
 
     Timer { id: scanStop; interval: 10000; onTriggered: if (root.adapter) root.adapter.discovering = false }
 
