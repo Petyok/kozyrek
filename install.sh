@@ -7,6 +7,7 @@ LINK="$HOME/.config/quickshell/kozyrek"
 command -v qs >/dev/null || { echo "quickshell (qs) not found — pacman -S quickshell"; exit 1; }
 command -v brightnessctl >/dev/null || echo "note: brightnessctl missing — brightness OSD will not work"
 command -v python3 >/dev/null || { echo "python3 not found (zhor needs it)"; exit 1; }
+command -v bun >/dev/null || echo "note: bun missing — the omp chat pill (docs/collab.md) will not work"
 
 if [[ ! -e $SRC/zhor/Zhor.qml ]]; then
     if [[ -d $SRC/.git ]]; then git -C "$SRC" submodule update --init zhor

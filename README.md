@@ -17,7 +17,7 @@ Measured on the target laptop (i5-5350U, 8 GB), 10 min idle after the switch: **
 
 | left | center | right |
 |---|---|---|
-| power menu · workspaces (app icons) · window title | [zhor](https://github.com/Petyok/zhor) · clock / calendar / weather / timers + alarms · screen recording | call recorder · VPN pills · keyboard layout · DND · volume · ping · wifi · bluetooth · battery · tray |
+| power menu · workspaces (app icons) · window title | [zhor](https://github.com/Petyok/zhor) · clock / calendar / weather / timers + alarms · screen recording | call recorder · omp chat · VPN pills · keyboard layout · DND · volume · ping · wifi · bluetooth · battery · tray |
 
 Plus: notification popups (top-right, DND, actions, images) and an OSD for
 volume / screen brightness / keyboard brightness driven over IPC.
@@ -51,6 +51,13 @@ to the TV is opened on first use and dropped after 2 min idle. "Mirror my screen
 shows the laptop screen on the TV (Cast Streaming, no browser). Protocol and
 limits: [docs/tv.md](docs/tv.md).
 
+omp chat: follow [omp](https://omp.sh) Collab sessions from the bar, on this
+laptop or on a server, as tabs in a popup: the live transcript (streaming text,
+thinking, tool calls with their output, images), subagents and their
+transcripts, a message box, Stop, and the agent's questions to answer. A
+notification says when a watched session finishes a turn or asks something.
+Setup, internals and limits: [docs/collab.md](docs/collab.md).
+
 ## Install
 
 ```
@@ -64,7 +71,8 @@ while `~/.config/quickshell/shell.qml` exists — move it away first.
 One module per file under `modules/`; `shell.qml` is the layout. `Theme.qml`
 holds the palette, `Kozy.qml` the shared state (fullscreen flag, DND, the one
 open popup). Pure helpers live in `lib/parse.js` (`node --test test_parse.mjs`);
-the recorder's and the dictation's Python helpers live in `rec/` and `dict/` with their own tests;
+the recorder's and the dictation's Python helpers live in `rec/` and `dict/` with their own tests,
+the omp chat's helper in `collab/`;
 `./test_kozyrek.sh` checks the config loads without QML warnings.
 
 Dev mode: `KOZYREK_DEV=1 qs -p ~/kozyrek` puts the bar at the bottom, ignores
