@@ -14,7 +14,7 @@ ShellRoot {
         center: [ M.Clock {}, M.ScreenRec { id: screenrec } ]
         // Rec first: the right Row is anchored right, so the one pill whose width
         // changes while it works shifts nothing when it is leftmost.
-        right:  [ M.Rec { id: rec }, Z.Zhor { id: zhor; fsActive: Kozy.fsActive; cPill: "#1effffff"; pillRadius: Theme.radius; anchors.verticalCenter: parent.verticalCenter }, M.Collab { svc: collab }, M.Vpn {}, M.Layout {}, M.Tv { on: tv.open; onClicked: tv.toggle() }, M.Dnd {}, M.Volume {}, M.Ping { id: pingPill }, M.Network { ping: pingPill }, M.Bluetooth {}, M.Battery {}, M.Tray {} ]
+        right:  [ M.Rec { id: rec }, Z.Zhor { id: zhor; fsActive: Kozy.fsActive; cPill: "#1effffff"; pillRadius: Theme.radius; anchors.verticalCenter: parent.verticalCenter }, M.Krepostnoy {}, M.Collab { svc: collab }, M.Vpn {}, M.Layout {}, M.Tv { on: tv.open; onClicked: tv.toggle() }, M.Dnd {}, M.Volume {}, M.Ping { id: pingPill }, M.Network { ping: pingPill }, M.Bluetooth {}, M.Battery {}, M.Tray {} ]
     }
     Osd {}
     Dictation { id: dict }
