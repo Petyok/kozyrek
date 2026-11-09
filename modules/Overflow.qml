@@ -23,6 +23,7 @@ K.Pill {
         home = Array.prototype.slice.call(row.children)
         for (const it of Array.prototype.slice.call(items)) {
             it.loudChanged?.connect(() => place(it))
+            it.activeChanged?.connect(() => place(it))
             it.clicked?.connect(() => pop.open = false)
             place(it)
         }
@@ -36,7 +37,11 @@ K.Pill {
     // QML, so the containers are re-appended in declared order afterwards, by way of
     // `shelf` (a null parent breaks `anchors…parent` bindings). Not this pill: an item
     // that reparents itself stops painting, so it must be declared first in its row.
+    // A pill with its popup open stays put until the popup closes: reading the chat
+    // clears `loud`, and moving the pill back into the closed chevron then would
+    // leave its popup open with nothing on the bar to close it from.
     function place(it) {
+        if (it.active) return
         const want = it.loud ? row : grid
         if (it.parent === want) return
         it.parent = want

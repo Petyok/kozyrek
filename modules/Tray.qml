@@ -35,6 +35,10 @@ Row {
                 property var stack: []
                 onOpenChanged: if (open) { handle = pill.modelData.menu; stack = [] }
                 QsMenuOpener { id: opener; menu: menu.handle }
+                // Each opener refs its handle; once a level loses its last ref the tray
+                // drops its children, so the submenu entered from it opens empty.
+                // Keep every level on the drill-down path referenced.
+                Instantiator { model: menu.stack; QsMenuOpener { required property var modelData; menu: modelData } }
 
                 Rectangle {
                     visible: menu.stack.length > 0
