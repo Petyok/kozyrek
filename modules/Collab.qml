@@ -465,14 +465,34 @@ K.Pill {
                 }
                 // Follow new output while the view is at the bottom; scrolling up stops that.
                 property bool stick: true
+                // Opening the popup re-sends the whole transcript (a reset clears the model
+                // and puts the view at the top), so opening always starts at the bottom.
+                // Rows size themselves after the jump (markdown, images), so a jump is not
+                // enough: keep pinning to the end while `stick` holds and the height grows.
                 onMovementEnded: stick = atYEnd
+                function toEnd() { Qt.callLater(() => { if (stick) positionViewAtEnd() }) }
+                onMovementStarted: stick = false
                 Connections {
+                onContentHeightChanged: toEnd()
+                onHeightChanged: toEnd()
                     target: pill.svc
-                    function onGrew() { if (lv.stick) Qt.callLater(() => lv.positionViewAtEnd()) }
+                    function onGrew() { lv.toEnd() }
                     function onSidChanged() { lv.stick = true }
                     function onAgentChanged() { lv.stick = true }
                 }
                 Text {
+                Connections { target: pop; function onOpenChanged() { if (pop.open) { lv.stick = true; lv.toEnd() } } }
+                Rectangle {
+                    parent: lv          // not the scrolling contentItem, where Flickable puts its children
+                    z: 2
+                    visible: !lv.atYEnd && lv.count > 0
+                    anchors { right: parent.right; bottom: parent.bottom; margins: 8 }
+                    width: 32; height: 32; radius: 16
+                    color: tbMa.containsMouse ? K.Theme.accent : K.Theme.bg
+                    border.width: 1; border.color: K.Theme.faint
+                    Text { anchors.centerIn: parent; text: "\u{F0045}"; color: K.Theme.text; font.pixelSize: 18; font.family: K.Theme.iconFont }   // arrow down
+                    MouseArea { id: tbMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: { lv.stick = true; lv.positionViewAtEnd(); lv.toEnd() } }
+                }
                     anchors.centerIn: parent
                     visible: lv.count === 0 && pill.svc.live.length === 0
                     text: pill.svc.agent !== "" && pop.a && !pop.a.file ? "this agent has no transcript" : "nothing here yet"
