@@ -9,6 +9,7 @@ QtObject {
     readonly property color faint:  "#33ffffff"
     readonly property color today:  "#705492"
     readonly property color warn:   "#e8b34a"
+    readonly property color good:   "#4ade80"
     readonly property color bad:    "#e05561"
 
     readonly property int barH:   51

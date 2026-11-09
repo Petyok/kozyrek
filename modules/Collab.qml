@@ -1,5 +1,6 @@
 import QtQuick
 import Quickshell
+import Quickshell.Io
 import "../" as K
 
 // omp Collab chat: pill + popup. The data and the helper connection live in ../Collab.qml.
@@ -447,7 +448,7 @@ K.Pill {
                 readonly property real screenH: K.Kozy.bar?.screen?.height ?? 900
                 height: Math.round(Math.max(140, Math.min(screenH * 0.62, screenH - K.Theme.barH - 150 - tabsFlow.height
                     - (agentsFlow.visible ? agentsFlow.height + 8 : 0) - (askBox.visible ? askBox.height + 8 : 0)
-                    - (composer.visible ? composer.height + 8 : 0))))
+                    - (composer.visible ? composer.height + 8 : 0) - (quota.visible ? quota.height + 10 : 0))))
                 clip: true
                 spacing: 4
                 cacheBuffer: 2000
@@ -464,23 +465,22 @@ K.Pill {
                     }
                 }
                 // Follow new output while the view is at the bottom; scrolling up stops that.
-                property bool stick: true
                 // Opening the popup re-sends the whole transcript (a reset clears the model
                 // and puts the view at the top), so opening always starts at the bottom.
                 // Rows size themselves after the jump (markdown, images), so a jump is not
                 // enough: keep pinning to the end while `stick` holds and the height grows.
-                onMovementEnded: stick = atYEnd
+                property bool stick: true
                 function toEnd() { Qt.callLater(() => { if (stick) positionViewAtEnd() }) }
                 onMovementStarted: stick = false
-                Connections {
+                onMovementEnded: stick = atYEnd
                 onContentHeightChanged: toEnd()
                 onHeightChanged: toEnd()
+                Connections {
                     target: pill.svc
                     function onGrew() { lv.toEnd() }
                     function onSidChanged() { lv.stick = true }
                     function onAgentChanged() { lv.stick = true }
                 }
-                Text {
                 Connections { target: pop; function onOpenChanged() { if (pop.open) { lv.stick = true; lv.toEnd() } } }
                 Rectangle {
                     parent: lv          // not the scrolling contentItem, where Flickable puts its children
@@ -493,6 +493,7 @@ K.Pill {
                     Text { anchors.centerIn: parent; text: "\u{F0045}"; color: K.Theme.text; font.pixelSize: 18; font.family: K.Theme.iconFont }   // arrow down
                     MouseArea { id: tbMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: { lv.stick = true; lv.positionViewAtEnd(); lv.toEnd() } }
                 }
+                Text {
                     anchors.centerIn: parent
                     visible: lv.count === 0 && pill.svc.live.length === 0
                     text: pill.svc.agent !== "" && pop.a && !pop.a.file ? "this agent has no transcript" : "nothing here yet"
@@ -583,6 +584,66 @@ K.Pill {
                 }
                 Btn { id: stopBtn; visible: pill.svc.agent === "" && pop.s !== null && pop.s.working; label: "stop"; fg: K.Theme.bad; height: 34; onHit: pill.svc.abort() }
                 Btn { id: sendBtn; label: "send"; height: 34; onHit: input.submit() }
+            }
+        }
+
+        // Quota left, the same rows as omp's line under its editor: its usage-left
+        // extension writes them to $XDG_RUNTIME_DIR/omp-usage.json every 30 s while
+        // an omp TUI runs. Older than 5 minutes = no omp running, shown dimmed.
+        Column {
+            id: quota
+            property var info: null
+            property real now: Date.now()
+            readonly property bool stale: !info || now - info.at > 300000
+            visible: !!info && info.rows.length > 0
+            width: pop.colW
+            spacing: 2
+            opacity: stale ? 0.45 : 1
+            function dur(ms) {
+                const mins = Math.max(0, Math.round(ms / 60000))
+                if (mins < 60) return mins + "m"
+                const h = Math.floor(mins / 60)
+                if (h < 24) return h + "h" + (mins % 60 ? (mins % 60) + "m" : "")
+                return Math.floor(h / 24) + "d" + (h % 24 ? (h % 24) + "h" : "")
+            }
+            function tone(left) { return left <= 20 ? K.Theme.bad : left <= 50 ? K.Theme.warn : K.Theme.good }
+            Timer { running: pop.open; repeat: true; interval: 30000; triggeredOnStart: true; onTriggered: quota.now = Date.now() }
+            FileView {
+                path: (Quickshell.env("XDG_RUNTIME_DIR") || "/tmp") + "/omp-usage.json"
+                watchChanges: true
+                printErrors: false      // absent until an omp TUI has run
+                onFileChanged: reload()
+                onLoaded: { try { quota.info = JSON.parse(text()) } catch (e) {} }
+            }
+            Repeater {
+                model: quota.info ? quota.info.rows : []
+                Row {
+                    id: qr
+                    required property var modelData
+                    spacing: 6
+                    Text { text: qr.modelData.account ?? ""; width: 170; elide: Text.ElideRight; color: K.Theme.dim; font.pixelSize: 11; anchors.verticalCenter: parent.verticalCenter }
+                    Repeater {
+                        model: qr.modelData.meters
+                        Row {
+                            id: qm
+                            required property var modelData
+                            required property int index
+                            spacing: 5
+                            Text { visible: qm.index > 0; text: "·"; color: K.Theme.faint; font.pixelSize: 11; anchors.verticalCenter: parent.verticalCenter }
+                            Text { text: qm.modelData.label; color: K.Theme.dim; font.pixelSize: 11; anchors.verticalCenter: parent.verticalCenter }
+                            Rectangle {
+                                width: 56; height: 3; radius: 2; color: K.Theme.faint; anchors.verticalCenter: parent.verticalCenter
+                                Rectangle { width: parent.width * qm.modelData.leftPct / 100; height: parent.height; radius: 2; color: quota.tone(qm.modelData.leftPct) }
+                            }
+                            Text { text: qm.modelData.leftPct + "%"; color: quota.tone(qm.modelData.leftPct); font.pixelSize: 11; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
+                            Text {
+                                visible: qm.modelData.resetsAt !== undefined
+                                text: "↻" + quota.dur(qm.modelData.resetsAt - quota.now)
+                                color: K.Theme.dim; font.pixelSize: 11; anchors.verticalCenter: parent.verticalCenter
+                            }
+                        }
+                    }
+                }
             }
         }
 
