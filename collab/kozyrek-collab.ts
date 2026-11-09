@@ -592,6 +592,93 @@ function toViewers(sid: string, agent: string, make: () => object): void {
 	}
 }
 
+// ── quota: `omp usage --json` on the host the viewed session runs on ─────────────
+// The accounts are the host's, not this laptop's: a vps session spends the vps login.
+
+const USAGE_MS = 60_000;
+interface UsageMeter {
+	label: string;
+	leftPct: number;
+	resetsAt?: number;
+}
+interface UsageRow {
+	account: string;
+	meters: UsageMeter[];
+}
+/** The fields read from `omp usage --json` (shape owned by omp; every field may be absent). */
+interface UsageReport {
+	provider?: string;
+	metadata?: Record<string, unknown>;
+	limits?: {
+		label?: string;
+		scope?: { windowId?: string; tier?: string };
+		window?: { id?: string; resetsAt?: number };
+		amount?: { usedFraction?: number };
+	}[];
+}
+const usage = new Map<string, { at: number; rows: UsageRow[]; busy: boolean }>();
+
+function usageRows(parsed: unknown): UsageRow[] {
+	const list = parsed && typeof parsed === "object" && "reports" in parsed && Array.isArray(parsed.reports) ? parsed.reports : [];
+	// omp's own JSON from the same omp: optional fields are checked where read
+	const reports = list as UsageReport[];
+	const own = reports.filter(r => Array.isArray(r?.limits) && r.limits.length > 0);
+	const multi = new Set(own.map(r => r.provider)).size > 1;
+	return own.map((r, i) => {
+		const md = r.metadata ?? {};
+		const who = [md.email, md.accountId, md.projectId].find((v): v is string => typeof v === "string" && v.trim() !== "") ?? `account ${i + 1}`;
+		const meters: UsageMeter[] = [];
+		for (const l of r.limits ?? []) {
+			const used = l.amount?.usedFraction;
+			if (typeof used !== "number" || !Number.isFinite(used)) continue; // count-only meter
+			const win = l.scope?.windowId ?? l.window?.id;
+			const winLabel = win === "monthly" ? "mo" : win;
+			const tier = l.scope?.tier;
+			// Floor: never overstate what is left; epsilon absorbs 0.29 * 100 = 28.999…
+			const leftPct = Math.max(0, Math.floor((1 - used) * 100 + 1e-9));
+			meters.push({ label: tier ? [tier, winLabel].filter(Boolean).join(" ") : (winLabel ?? l.label ?? "?"), leftPct, resetsAt: l.window?.resetsAt });
+		}
+		return { account: multi ? `${r.provider} ${who}` : who, meters };
+	});
+}
+
+function pushUsage(label: string): void {
+	const u = usage.get(label);
+	if (!u) return;
+	for (const sock of clients) {
+		const s = sessions.get(sock.data.sid);
+		if (s?.host && s.label === label) send(sock, { t: "usage", sid: s.sid, at: u.at, rows: u.rows });
+	}
+}
+
+async function refreshUsage(host: HostCfg): Promise<void> {
+	const cur = usage.get(host.label);
+	if (cur && (cur.busy || Date.now() - cur.at < USAGE_MS)) return;
+	usage.set(host.label, { at: cur?.at ?? 0, rows: cur?.rows ?? [], busy: true });
+	const r = await run([...host.cmd, "omp", "usage", "--json"]);
+	let rows = cur?.rows ?? [];
+	let at = cur?.at ?? 0;
+	if (r.ok) {
+		try {
+			rows = usageRows(JSON.parse(r.out));
+			at = Date.now();
+		} catch {
+			log(`usage on ${host.label}: not JSON`);
+		}
+	} else log(`usage on ${host.label}: ${r.err}`);
+	usage.set(host.label, { at, rows, busy: false });
+	pushUsage(host.label);
+}
+
+setInterval(() => {
+	const hosts = new Map<string, HostCfg>();
+	for (const sock of clients) {
+		const h = sessions.get(sock.data.sid)?.host;
+		if (h) hosts.set(h.label, h);
+	}
+	for (const h of hosts.values()) void refreshUsage(h);
+}, USAGE_MS).unref();
+
 const isViewed = (sid: string, agent: string): boolean => [...clients].some(c => c.data.sid === sid && c.data.agent === agent);
 const viewed = (sid: string): boolean => [...clients].some(c => c.data.sid === sid);
 
@@ -623,6 +710,11 @@ async function handle(sock: Socket<Client>, msg: Record<string, unknown>): Promi
 			if (s.unread) {
 				s.unread = false;
 				scheduleMeta();
+			}
+			if (s.host) {
+				const u = usage.get(s.label);
+				if (u && u.at > 0) send(sock, { t: "usage", sid: s.sid, at: u.at, rows: u.rows });
+				void refreshUsage(s.host);
 			}
 			if (sock.data.agent) s.watchAgent(sock.data.agent);
 			else {

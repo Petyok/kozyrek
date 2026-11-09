@@ -1,6 +1,5 @@
 import QtQuick
 import Quickshell
-import Quickshell.Io
 import "../" as K
 
 // omp Collab chat: pill + popup. The data and the helper connection live in ../Collab.qml.
@@ -587,12 +586,12 @@ K.Pill {
             }
         }
 
-        // Quota left, the same rows as omp's line under its editor: its usage-left
-        // extension writes them to $XDG_RUNTIME_DIR/omp-usage.json every 30 s while
-        // an omp TUI runs. Older than 5 minutes = no omp running, shown dimmed.
+        // Quota left on the accounts of the host the shown session runs on (`omp usage`
+        // there, polled by the helper every minute while you look). Older than
+        // 5 minutes = the host stopped answering, shown dimmed.
         Column {
             id: quota
-            property var info: null
+            readonly property var info: pill.svc.usage
             property real now: Date.now()
             readonly property bool stale: !info || now - info.at > 300000
             visible: !!info && info.rows.length > 0
@@ -608,13 +607,6 @@ K.Pill {
             }
             function tone(left) { return left <= 20 ? K.Theme.bad : left <= 50 ? K.Theme.warn : K.Theme.good }
             Timer { running: pop.open; repeat: true; interval: 30000; triggeredOnStart: true; onTriggered: quota.now = Date.now() }
-            FileView {
-                path: (Quickshell.env("XDG_RUNTIME_DIR") || "/tmp") + "/omp-usage.json"
-                watchChanges: true
-                printErrors: false      // absent until an omp TUI has run
-                onFileChanged: reload()
-                onLoaded: { try { quota.info = JSON.parse(text()) } catch (e) {} }
-            }
             Repeater {
                 model: quota.info ? quota.info.rows : []
                 Row {

@@ -24,6 +24,7 @@ Scope {
     property var expanded: ({})         // row id -> true for rows opened by a click
     property var _at: ({})              // row id -> index in `rows`
     signal grew()                      // rows or live rows changed: the popup keeps the view at the bottom
+    property var usage: null            // quota of the shown session's host: { at, rows }, from `omp usage` there
 
     readonly property string sockPath: Quickshell.env("KOZYREK_COLLAB_SOCK") || (Quickshell.env("XDG_RUNTIME_DIR") || "/tmp") + "/kozyrek-collab.sock"
     readonly property string unit: Quickshell.env("KOZYREK_COLLAB_UNIT") || "kozyrek-collab"
@@ -33,7 +34,7 @@ Scope {
     function toggle() { open = !open }
     function show(s, a) {
         sid = s; agent = a || ""
-        rows.clear(); _at = ({}); live = []; err = ""
+        rows.clear(); _at = ({}); live = []; err = ""; usage = null
         sendView()
         if (sid === "") discover()
     }
@@ -82,6 +83,7 @@ Scope {
             append(m.added); grew()
             break
         case "live": if (m.sid === sid && agent === "") { live = m.rows; grew() } break
+        case "usage": if (m.sid === sid) usage = m; break
         case "error": err = m.message; pendingJoin = ""; discovering = false; break
         case "focus": open = true; show(m.sid, ""); break
         }
