@@ -32,6 +32,7 @@
 - Critical notifications go away after 15 s (or the sender's own timeout) instead of staying until clicked.
 
 ### Fixed
+- Tray icons (NetBird, Telegram…) show in the chevron's popup after a fresh start again. They took their place but were not drawn until a config reload, because the tray row was moved into the popup before its icons arrived; the tray is now declared in the popup.
 - TV remote: a press on the touchpad now puts the TV's cursor exactly there (within 1 px) and clicks there. The TV moves its cursor by how far the finger moves, not to where it touches, so a press used to continue from wherever the cursor was left; `tvd` now drags to the top-left corner first (the cursor clamps there) and on to the target in the same gesture.
 - Opening the transcript from the "Transcript ready" notification now clears the pill too (it kept offering to open the transcript). The action dismisses only that session, so a late click never clears a newer call; new IPC `rec refresh` makes the pill re-read the state.
 - The clock no longer slides under the right zone when it grows into the middle (a connected Bluetooth device's name): the centre zone stays centred while it fits and otherwise sits between the side zones.

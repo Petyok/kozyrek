@@ -4,7 +4,8 @@ import "../" as K
 // "Show hidden icons", Windows 7 style: `items` live in this pill's popup instead
 // of on the bar, and each one steps back to its own place on the bar while its
 // `loud` is true (recording, agent working, a question waiting...). A pill opened
-// from the popup anchors its own popup to this chevron (see Popup.qml).
+// from the popup anchors its own popup to this chevron (see Popup.qml). The tray
+// is never loud, so it is declared in the popup instead of being moved there.
 K.Pill {
     id: root
     property list<Item> items
@@ -12,7 +13,7 @@ K.Pill {
     property var home: []                 // its children in declared order
     // Not `visible`: that is the effective visibility, false for everything in the
     // popup once it has been closed. An empty tray row is 0 wide.
-    readonly property int hiddenCount: Array.prototype.filter.call(items, it => it.parent === grid && it.width > 0).length
+    readonly property int hiddenCount: Array.prototype.filter.call(grid.children, it => it.width > 0).length
 
     visible: hiddenCount > 0
     active: pop.open
@@ -61,6 +62,9 @@ K.Pill {
         id: pop
         pill: root
         contentWidth: Math.max(120, grid.implicitWidth + 32)
-        Row { id: grid; spacing: 6 }
+        // Tray icons that arrive after startup (all of them, on a fresh start) were
+        // not drawn when the tray row had been moved into this popup before its
+        // first show: the row kept its width but painted nothing until a reload.
+        Row { id: grid; spacing: 6; Tray {} }
     }
 }

@@ -16,7 +16,7 @@ ShellRoot {
         // notification icons. Rec, КРЕПОСТНОЙ, omp chat, TV and the tray live in its
         // popup and step out onto the bar while `loud`; Rec then comes right after it,
         // so its changing width shifts no other pill.
-        right:  [ M.Overflow { items: [rec, krep, collabPill, tvPill, tray] }, M.Rec { id: rec }, Z.Zhor { id: zhor; fsActive: Kozy.fsActive; cPill: "#1effffff"; pillRadius: Theme.radius; anchors.verticalCenter: parent.verticalCenter }, M.Krepostnoy { id: krep }, M.Collab { id: collabPill; svc: collab }, M.Vpn {}, M.Layout {}, M.Tv { id: tvPill; on: tv.open; onClicked: tv.toggle() }, M.Dnd {}, M.Volume {}, M.Ping { id: pingPill }, M.Network { ping: pingPill }, M.Bluetooth {}, M.Battery {}, M.Tray { id: tray } ]
+        right:  [ M.Overflow { items: [rec, krep, collabPill, tvPill] }, M.Rec { id: rec }, Z.Zhor { id: zhor; fsActive: Kozy.fsActive; cPill: "#1effffff"; pillRadius: Theme.radius; anchors.verticalCenter: parent.verticalCenter }, M.Krepostnoy { id: krep }, M.Collab { id: collabPill; svc: collab }, M.Vpn {}, M.Layout {}, M.Tv { id: tvPill; on: tv.open; onClicked: tv.toggle() }, M.Dnd {}, M.Volume {}, M.Ping { id: pingPill }, M.Network { ping: pingPill }, M.Bluetooth {}, M.Battery {} ]
     }
     Osd {}
     Dictation { id: dict }
